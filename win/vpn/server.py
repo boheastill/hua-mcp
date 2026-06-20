@@ -1,19 +1,19 @@
-"""vpn MCP — restart the network proxy (sing-box) for the agent.
+"""vpn MCP — manage the network proxy (sing-box) for the agent.
 
-Runs on the Windows host (the proxy is a `sc`-controlled Windows service). Exposes
-ONLY a restart: switching nodes / speed tests / SSH probes were intentionally dropped
-— the agent just needs to bring the link back when it wedges.
+Runs on the Windows host (the proxy is a `sc`-controlled Windows service). Exposes:
+  - vpn_restart: atomic stop → clear cache → start → verify
+  - vpn_status: query proxy groups, selected nodes, service state
+  - vpn_logs: read recent sing-box log lines (optionally filtered by level)
 
-Restart is atomic and self-verifying: stop -> wait for TUN release -> clear a poisoned
-cache -> start -> poll the local Clash API (127.0.0.1, works even when the internet
-is down).
+Restart is self-verifying: stop -> wait for TUN release -> clear poisoned cache ->
+start -> poll the local Clash API (127.0.0.1, works even when the internet is down).
 """
 import os
 import pathlib
 import subprocess
 import sys
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -26,8 +26,39 @@ import huamcp  # noqa: E402
 SERVICE = "singbox"                       # Windows service name (sc stop/start)
 CLASH_API = "http://127.0.0.1:9090"       # local control API used to verify liveness
 CACHE_DB = os.path.expanduser("~\\sing-box\\cache.db")  # corrupt cache => start timeout
+LOG_FILE = os.path.expanduser("~\\sing-box\\sing-box.log")
 
 mcp = huamcp.server(__file__)
+
+
+def _service_state() -> str:
+    """Return running / stopped / unknown."""
+    try:
+        r = subprocess.run(
+            ["sc", "query", SERVICE], capture_output=True, text=True, timeout=10
+        )
+        out = r.stdout
+        if "RUNNING" in out:
+            return "running"
+        if "STOPPED" in out:
+            return "stopped"
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _clash_get(path: str, timeout: float = 4) -> Optional[dict]:
+    """GET from Clash API; returns None on failure."""
+    try:
+        r = requests.get(f"{CLASH_API}{path}", timeout=timeout)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return None
+
+
+# ── tools ────────────────────────────────────────────────────────────────────
 
 
 @mcp.tool()
@@ -86,6 +117,74 @@ def vpn_restart() -> Dict[str, Any]:
             f"启动失败。单独跑 'sc start {SERVICE}' 看错误，"
             "或直接 sing-box.exe run -c config.json 看报错。"
         ),
+    }
+
+
+@mcp.tool()
+def vpn_status() -> Dict[str, Any]:
+    """Query the current VPN/proxy status: service state, proxy groups, selected nodes.
+
+    Returns service running/stopped, each proxy group's currently selected node,
+    and available outbounds. Works even when the internet is down (local API only).
+    """
+    state = _service_state()
+    groups: Dict[str, Any] = {}
+
+    proxies = _clash_get("/proxies")
+    if proxies:
+        for name, info in proxies.get("proxies", {}).items():
+            ptype = info.get("type", "")
+            if ptype in ("Selector", "URLTest"):
+                now = info.get("now", "?")
+                all_opts = info.get("all", [])
+                groups[name] = {
+                    "type": ptype,
+                    "selected": now,
+                    "options": all_opts,
+                }
+
+    version = _clash_get("/version")
+
+    return {
+        "service": state,
+        "api_reachable": version is not None,
+        "version": version.get("version") if version else None,
+        "groups": groups,
+    }
+
+
+@mcp.tool()
+def vpn_logs(lines: int = 30, level: Optional[str] = None) -> Dict[str, Any]:
+    """Read recent sing-box log lines.
+
+    Args:
+        lines: Number of tail lines to return (default 30, max 200).
+        level: Filter by level (e.g. "ERROR", "WARN"). None = all levels.
+
+    Returns the last N log lines, newest last. Useful for diagnosing why the
+    proxy is slow or wedged before calling vpn_restart.
+    """
+    lines = min(max(lines, 1), 200)
+
+    if not os.path.exists(LOG_FILE):
+        return {"ok": False, "error": f"Log file not found: {LOG_FILE}", "lines": []}
+
+    try:
+        with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+    except OSError as e:
+        return {"ok": False, "error": str(e), "lines": []}
+
+    if level:
+        level_upper = level.upper()
+        all_lines = [l for l in all_lines if level_upper in l.upper()]
+
+    tail = all_lines[-lines:]
+    return {
+        "ok": True,
+        "total_in_file": len(all_lines),
+        "returned": len(tail),
+        "lines": [l.rstrip("\n\r") for l in tail],
     }
 
 
