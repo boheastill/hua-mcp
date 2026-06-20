@@ -1,8 +1,17 @@
 """vpn MCP -- manage the network proxy (sing-box) for the agent.
 
+CRITICAL CONTEXT (read this first, every time):
+  You are a domestic Chinese AI model. You do NOT need the proxy to function.
+  When the proxy is down, you are STILL fully operational -- only the user's
+  access to foreign websites is broken. The user may be panicking (e.g. mid
+  video call). Your job: fix the network silently and report when done.
+  The user does NOT need to do anything unless you explicitly ask them to.
+
 WHAT THIS MCP DOES:
-  Provides a safe interface for agents to manage the Windows network proxy
-  (sing-box) without touching the filesystem or running shell commands.
+  Provides tools to diagnose, restart, reconfigure, and switch nodes for the
+  Windows network proxy (sing-box). You manage the network through these tools.
+  You do NOT need to touch the filesystem or run shell commands -- but you CAN
+  if the tools are not enough (e.g. SSH to check server status).
 
 WHAT IS SING-BOX:
   sing-box is a universal proxy platform running as a Windows service ("singbox").
@@ -17,33 +26,63 @@ CONFIG FILE:
 SERVERS:
   - SG (47.130.65.208): Primary. Hysteria2 (UDP 443) + SS2022 (TCP 8443).
   - US (66.154.101.110): Backup. SS2022 (TCP 8443). Sometimes goes down.
-  - Azure (52.146.92.1): Emergency. WireGuard (UDP 51820). Manual activation.
+  - Azure (52.146.92.1): Emergency. WireGuard (UDP 51820). Last resort.
+  SSH: ssh -i D:/ssh-keys/lbqg.pem <user>@<ip>
+  (SG: user=admin, US: user=root, Azure: user=bohea)
 
 PROXY GROUPS:
   - sg-auto (URLTest): Auto-selects between hy2-sg and ss-sg by latency.
   - agent-group (Selector): For AI agents. Defaults to agent-sg. Can switch to agent-us.
 
-TOOLS (in typical workflow order):
+TOOLS:
   1. vpn_status            -- see current state (which node, service running?)
   2. vpn_connectivity_test -- actually test internet (not just API)
-  3. vpn_logs              -- check recent errors before making changes
-  4. vpn_config            -- read the current config to understand rules
-  5. vpn_route_test        -- predict if a domain goes direct or proxy
-  6. vpn_config_write      -- modify config (with validation, does NOT restart)
-  7. vpn_apply             -- write config + restart atomically (one-shot)
-  8. vpn_restart           -- just restart without config change
-  9. vpn_switch_node       -- quick-switch to a different outbound node
+  3. vpn_restart           -- atomic restart + verify
+  4. vpn_switch_node       -- quick-switch to a different outbound node
+  5. vpn_logs              -- read recent error logs
+  6. vpn_config            -- read current config
+  7. vpn_route_test        -- predict if a domain goes direct or proxy
+  8. vpn_config_write      -- write config (with validation, does NOT restart)
+  9. vpn_apply             -- write config + restart (one-shot)
 
-EMERGENCY PROCEDURE (network down during video call):
-  Step 1: vpn_connectivity_test() -- confirm what's broken
-  Step 2: vpn_restart() -- try quick fix
-  Step 3: if still broken, vpn_connectivity_test() again
-  Step 4: if SG node dead, vpn_switch_node(target="agent-us") -- try US node
-  Step 5: if all nodes dead, tell user:
-    "All proxy nodes are unreachable. Manual fallback:
-     Option A: Activate Azure WireGuard (D:\\ssh-keys\\azure-au-wg.conf)
-     Option B: Use phone hotspot as temporary internet"
-  DO NOT keep retrying the same broken node. Escalate after 2 failures.
+EMERGENCY PROCEDURE (user says network is down):
+  Step 1: vpn_connectivity_test()
+    - api_ok + proxy_ok + direct_ok  => all good, maybe browser issue
+    - api_ok + !proxy_ok + direct_ok => proxy node dead, go to Step 2
+    - api_ok + !proxy_ok + !direct_ok => TUN broken, go to Step 2
+    - !api_ok + !proxy_ok + direct_ok => sing-box crashed, go to Step 2
+
+  Step 2: vpn_restart()
+    - ok=True  => done, tell user "fixed, reconnect your call"
+    - ok=False => go to Step 3
+
+  Step 3: vpn_connectivity_test() again
+    - proxy_ok=True => fixed
+    - proxy_ok=False => go to Step 4
+
+  Step 4: vpn_switch_node(target="ss-sg")  (force TCP instead of UDP)
+    - Then vpn_connectivity_test()
+    - proxy_ok=True => done
+    - proxy_ok=False => vpn_switch_node(target="agent-us")  (try US)
+    - proxy_ok=True => done
+    - proxy_ok=False => go to Step 5
+
+  Step 5: SSH to check servers
+    - ssh admin@47.130.65.208 and check: ss -tlnp | grep -E '443|8443'
+    - If server is down, restart the service on the server
+    - If server is up but unreachable from China, go to Step 6
+
+  Step 6: Last resort -- tell user
+    "All proxy servers are unreachable. You need to act:
+     Option A: Open D:\\ssh-keys\\azure-au-wg.conf in WireGuard, connect
+     Option B: Use phone hotspot as temporary internet
+     Option C: sc stop singbox && connect OpenVPN (D:\\vpn-configs\\us-openvpn-tcp.ovpn)"
+
+  RULES:
+    - NEVER retry the same broken node more than twice. Escalate.
+    - You have ~3 minutes before the user's video call fully drops.
+    - Be concise. "Fixed" is better than "I restarted the service successfully."
+    - If you need the user to do something, give ONE clear instruction.
 
 TYPICAL WORKFLOW -- add a domain to proxy:
   1. cfg = vpn_config()
@@ -55,7 +94,8 @@ TYPICAL WORKFLOW -- add a domain to proxy:
 DESIGN PRINCIPLE:
   Agent manages the network entirely through these tools, never touching the
   filesystem or running shell commands directly. Every write is validated and
-  backed up. Every restart is self-verifying.
+  backed up. Every restart is self-verifying. The agent is ALWAYS available
+  (domestic model, no proxy needed) and should fix things silently.
 """
 import json
 import os
