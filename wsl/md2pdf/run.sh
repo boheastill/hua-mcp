@@ -13,5 +13,6 @@ exec "$NIX" develop -c bash -c '
   req=requirements.txt; [ -f requirements.lock ] && req=requirements.lock
   VIRTUAL_ENV="$PWD/.venv" "$UV" pip install -q -r "$req"
   [ -d node_modules ] || { [ -f package-lock.json ] && npm ci --no-audit --no-fund || npm install --no-audit --no-fund; }
+  export PATH="/nix/store/gq9hcb85prkd6gsghzfmil6rbcf8xq9a-nodejs-slim-22.22.3/bin:$PATH"
   exec .venv/bin/python server.py
 '
