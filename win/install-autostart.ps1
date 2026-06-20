@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 # this script as admin (UAC prompt) and exit the non-elevated instance.
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-    Write-Host "Not elevated — relaunching as admin (accept the UAC prompt)…"
+    Write-Host "Not elevated - relaunching as admin (accept the UAC prompt)..."
     Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
     exit
 }
@@ -20,7 +20,7 @@ $WinDir = "\\wsl.localhost\Ubuntu\home\bohea\code-workspace\hua-mcp\win"
 # $WinDir = "C:\hua-mcp\win"   # <- uncomment if you cloned to C: instead
 
 $StartAll = Join-Path $WinDir "start-all.ps1"
-if (-not (Test-Path $StartAll)) { throw "start-all.ps1 not found at $StartAll — fix the path above." }
+if (-not (Test-Path $StartAll)) { throw "start-all.ps1 not found at $StartAll - fix the path above." }
 
 $action  = New-ScheduledTaskAction -Execute "powershell.exe" `
     -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$StartAll`""

@@ -78,6 +78,12 @@ for mf in sorted(mans):
     if not (d / "requirements.txt").exists(): errors.append(f"{d}: missing requirements.txt")
     launcher = "run.ps1" if os_ == "win" else "run.sh"
     if not (d / launcher).exists(): errors.append(f"{d}: missing {launcher}")
+# .ps1 must be ASCII: Windows PowerShell 5.1 reads files as the system ANSI codepage
+# (e.g. GBK) and non-ASCII bytes corrupt the script ("string missing terminator").
+for ps in pathlib.Path('.').rglob('*.ps1'):
+    if '.venv' in ps.parts or 'node_modules' in ps.parts: continue
+    try: ps.read_bytes().decode('ascii')
+    except UnicodeDecodeError: errors.append(f"{ps}: non-ASCII char (breaks Windows PowerShell 5.1) - use ASCII only")
 for w in warns: print(f"  ⚠ {w}")
 for e in errors: print(f"  ✗ {e}")
 print(f"validate: {len(mans)} MCP(s), {len(errors)} error(s), {len(warns)} warning(s)")
