@@ -1,11 +1,8 @@
-"""md2pdf — markdown → premium PDF (offline, mermaid-capable).
+"""md2pdf -- markdown to premium PDF (offline, mermaid-capable).
 
-Two faces, one process:
-  • MCP tool `md_to_pdf` — for agents (Claude on WSL / Windows, via the fleet port).
-  • REST     `POST /pdf` — for the future public website endpoint.
-
-Bind / health / auth / transport are handled by huamcp (secure by default: 127.0.0.1;
-set MD2PDF_TOKEN and run --public to expose with Bearer auth). `GET /health` is open.
+Tool: md_to_pdf(markdown, output_path?, title?, subtitle?, author?, lang?, return_base64?)
+REST: POST /pdf  body: {"md": "...", "title": "...", "lang": "en"}  returns PDF bytes.
+Port: 8110. Auth: MD2PDF_TOKEN env var (optional). Health: GET /health.
 """
 import base64
 import pathlib
@@ -94,7 +91,7 @@ async def pdf_endpoint(request):
         return JSONResponse({"detail": "invalid JSON body"}, status_code=400)
     try:
         pdf = _render(
-            (body or {}).get("md", ""),
+            (body or {}).get("md") or (body or {}).get("markdown", ""),
             title=body.get("title"),
             subtitle=body.get("subtitle"),
             author=body.get("author"),
