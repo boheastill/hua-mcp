@@ -447,7 +447,7 @@ def vpn_switch_node(target: str = "sg-auto") -> Dict[str, Any]:
             json={"name": node},
             timeout=4,
         )
-        ok = r.status_code == 204
+        ok = r.status_code in (200, 204)  # Clash impls return 200 or 204 on success
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -479,6 +479,8 @@ def vpn_route_test(domain: str = "", ip: str = "") -> Dict[str, Any]:
         "ok": True,
         "domain": domain,
         "ip": ip or "(resolved)",
+        "approximate": True,
+        "note": "Simulation skips process_name and rule_set (e.g. geosite-cn) rules; a real match may differ.",
         **result,
     }
 
