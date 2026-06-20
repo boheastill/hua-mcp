@@ -105,25 +105,18 @@ class Md2Pdf:
         with open(temp_html_path, "w", encoding="utf-8") as f:
             f.write(final_html)
 
-        # Prefer the Nix-injected, supply-chain-clean Chromium.
-        chromium_exe = os.environ.get("PUPPETEER_EXECUTABLE_PATH", "chromium")
-        cmd = [
-            chromium_exe,
-            "--headless",
-            "--disable-gpu",
-            "--no-sandbox",
-            "--run-all-compositor-stages-before-draw",
-            "--no-pdf-header-footer",
-            f"--print-to-pdf={output_path}",
-            f"file://{temp_html_path}",
-        ]
+        # Render via Puppeteer (print.js): Chromium's CLI --print-to-pdf can't draw a
+        # footer, and Chromium ignores CSS @page margin boxes, so page numbers need
+        # page.pdf({footerTemplate}). node + puppeteer come from the Nix env.
+        print_js = os.path.join(self.base_dir, "print.js")
+        cmd = ["node", print_js, temp_html_path, output_path]
         try:
             # Timeout guard so a wedged headless browser can't hang the daemon.
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=40)
+            result = subprocess.run(cmd, cwd=self.base_dir, capture_output=True, text=True, timeout=60)
             if result.returncode != 0:
-                raise RuntimeError(f"chromium exited {result.returncode}: {result.stderr[-400:]}")
+                raise RuntimeError(f"puppeteer print failed: {result.stderr[-400:]}")
             if not os.path.exists(output_path):
-                raise RuntimeError("chromium produced no output file")
+                raise RuntimeError("puppeteer produced no output file")
             return output_path
         finally:
             if os.path.exists(temp_html_path):
