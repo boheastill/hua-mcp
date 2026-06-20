@@ -8,9 +8,10 @@ NIX="${NIX:-/nix/var/nix/profiles/default/bin/nix}"
 
 exec "$NIX" develop -c bash -c '
   set -euo pipefail
-  [ -d .venv ] || uv venv .venv
+  UV="/home/bohea/.local/bin/uv"
+  [ -d .venv ] || "$UV" venv .venv
   req=requirements.txt; [ -f requirements.lock ] && req=requirements.lock
-  VIRTUAL_ENV="$PWD/.venv" uv pip install -q -r "$req"
+  VIRTUAL_ENV="$PWD/.venv" "$UV" pip install -q -r "$req"
   [ -d node_modules ] || { [ -f package-lock.json ] && npm ci --no-audit --no-fund || npm install --no-audit --no-fund; }
   exec .venv/bin/python server.py
 '
