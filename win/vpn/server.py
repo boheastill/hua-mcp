@@ -6,9 +6,8 @@ ONLY a restart: switching nodes / speed tests / SSH probes were intentionally dr
 
 Restart is atomic and self-verifying: stop -> wait for TUN release -> clear a poisoned
 cache -> start -> poll the local Clash API (127.0.0.1, works even when the internet
-is down). Self-contained: reads its own mcp.json for name+port.
+is down).
 """
-import json
 import os
 import pathlib
 import subprocess
@@ -17,16 +16,18 @@ import time
 from typing import Any, Dict, List
 
 import requests
-from mcp.server.fastmcp import FastMCP
 
-HERE = pathlib.Path(__file__).resolve().parent
-META = json.loads((HERE / "mcp.json").read_text(encoding="utf-8"))
+for _p in pathlib.Path(__file__).resolve().parents:
+    if (_p / "huamcp.py").exists():
+        sys.path.insert(0, str(_p))
+        break
+import huamcp  # noqa: E402
 
 SERVICE = "singbox"                       # Windows service name (sc stop/start)
 CLASH_API = "http://127.0.0.1:9090"       # local control API used to verify liveness
 CACHE_DB = os.path.expanduser("~\\sing-box\\cache.db")  # corrupt cache => start timeout
 
-mcp = FastMCP(META["name"], host="0.0.0.0", port=META["port"])
+mcp = huamcp.server(__file__)
 
 
 @mcp.tool()
@@ -88,12 +89,5 @@ def vpn_restart() -> Dict[str, Any]:
     }
 
 
-@mcp.custom_route("/health", methods=["GET"])
-async def _health(request):
-    from starlette.responses import JSONResponse
-
-    return JSONResponse({"ok": True, "mcp": META["name"], "os": META["os"], "port": META["port"]})
-
-
 if __name__ == "__main__":
-    mcp.run() if "--stdio" in sys.argv else mcp.run(transport="streamable-http")
+    huamcp.run(mcp)

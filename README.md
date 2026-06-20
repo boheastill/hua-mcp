@@ -5,20 +5,50 @@
 ## 结构
 
 ```
-fleet.sh           一键入口(扫描各 MCP,无需中心文件)
+huamcp.py          共享运行时(绑定/health/鉴权/传输)——你只管写工具
+fleet.sh           一键入口(validate/test/up/down/health/config…)
 gen_config.py      扫描 */*/mcp.json → 生成客户端 .mcp.json
 _template/         复制它来新建一个 MCP
-win/               Windows 主机启动(任务计划)
-  vpn/             server.py  mcp.json(:8001)  run.ps1  requirements.txt
-  install-autostart.ps1   start-all.ps1
-wsl/               WSL 启动(PM2)
-  identity/        server.py  checker.py  mcp.json(:8101)  run.sh
-  md2pdf/          server.py  renderer.py  templates/  flake.nix  mcp.json(:8110)  run.sh
+win/   <name>/     Windows 主机启动(任务计划)
+wsl/   <name>/     WSL 启动(PM2)
 ```
 
-每个 MCP **自包含、自描述**:目录里一个 `mcp.json`(`name`/`port`/`os`/`public`)就是它的全部元数据。`server.py` 读自己的 `mcp.json` 起服务,内联 `@mcp.tool()`,带 `GET /health`,默认 streamable-http(`--stdio` 可切本地)。**没有共享运行时、没有自动发现魔法、没有中心 registry**——打开一个目录就是一个完整的 MCP。
+一个 MCP 目录 = `server.py` + `mcp.json` + `requirements.txt`(+`requirements.lock`)+ `run.sh`(wsl)/`run.ps1`(win)。`mcp.json`(`name`/`port`/`os`/`public`/可选 `auth_env`)是它**唯一的元数据**,没有中心 registry。
 
-端口段:`win 8001-8099`,`wsl 8100+`。
+## 契约(为什么 agent 改它不易出错)
+
+`server.py` 只做一件事:**声明工具**。横切关注点全在 `huamcp.py` 一处:
+
+```python
+import pathlib, sys
+for _p in pathlib.Path(__file__).resolve().parents:
+    if (_p/"huamcp.py").exists(): sys.path.insert(0, str(_p)); break
+import huamcp
+
+mcp = huamcp.server(__file__)          # 读自己的 mcp.json,绑定+/health+鉴权
+
+@mcp.tool()
+def my_tool(...): ...                   # ← agent 只动这里
+
+if __name__ == "__main__":
+    huamcp.run(mcp)                     # streamable-http(--stdio 切本地)
+```
+
+- **安全默认**:`huamcp` 绑 `127.0.0.1`。公网开放才用 `--public`(或 `HUAMCP_PUBLIC=1`)绑 `0.0.0.0`。WSL2 mirrored 网络下 `127.0.0.1` 仍 Win↔WSL 双向可达,所以安全默认不影响舰队。
+- **统一鉴权缝**:`mcp.json` 里写 `auth_env`(或设 `HUAMCP_TOKEN`)并给该环境变量赋值后,除 `/health` 外所有路由都要 `Authorization: Bearer <token>`;不设 = 开放(本地)。**公网化 = 配一个环境变量,不改代码。**
+- **统一 `/health`**:`{ok,mcp,os,port,public}`,每个 MCP 一致。
+
+## 加 / 改 / 删一个 MCP
+
+```bash
+cp -r _template wsl/myname        # 或 win/myname;改 mcp.json(name==目录名/port/os)
+# 在 server.py 写 @mcp.tool();依赖进 requirements.txt
+uv pip compile requirements.txt -o requirements.lock   # 锁依赖(可复现)
+./fleet.sh validate               # 校验:键全/端口唯一且在段内/文件齐(出错即退 1)
+./fleet.sh test                   # 冒烟:每个 MCP 装依赖 + import server
+./fleet.sh up                     # 起(wsl);win 重跑 win/install-autostart.ps1
+```
+删一个 MCP = 删目录(+ `./fleet.sh down` 前)。`fleet.sh`/`gen_config.py` 全靠扫描发现,**永不需要改中心文件**。端口段:`win 8001-8099`,`wsl 8100+`。
 
 ## 现有 MCP
 
@@ -28,29 +58,24 @@ wsl/               WSL 启动(PM2)
 | `identity` | 8101 | WSL | 9 个模型身份/运行环境检测 |
 | `md2pdf` | 8110 | WSL | `md_to_pdf`;另开 REST `POST /pdf`(将来公网端点) |
 
-> 范围:hua-mcp 只收**个人通用**工具。业务/项目耦合的企业级 MCP(如 `ics`)留在各自项目,需要时让 agent 直接连它的端口即可。
+> 范围:hua-mcp 只收**个人通用**工具。业务/项目耦合的企业级 MCP(如 `ics`)留在各自项目。
 
-## 加一个 MCP
-
-```bash
-cp -r _template wsl/myname      # 或 win/myname
-# 改 mcp.json(name/port/os),在 server.py 写 @mcp.tool(),deps 进 requirements.txt
-./fleet.sh up                   # wsl;win 则重跑 win/install-autostart.ps1
-```
-`fleet.sh` 和 `gen_config.py` 靠扫描 `*/*/mcp.json` 自动发现它,**不用改任何中心文件**。
-
-## 跑 / 自启(自包含,脚本都在仓库里)
+## 跑 / 自启(脚本都在仓库里)
 
 ```bash
 ./fleet.sh doctor     # 查 uv/node/pm2/nix
-./fleet.sh list       # 列出发现的 MCP
 ./fleet.sh up         # PM2 拉起全部 wsl MCP(各一进程)
 ./fleet.sh health     # 逐个 curl /health
 ./fleet.sh autostart  # pm2 save + 提示开机自启命令
 ./fleet.sh config     # 生成客户端 .mcp.json
-# down / restart / status / logs [name]
+# list / validate / test [--live] / down / restart / status / logs [name]
 ```
 
 - **WSL 侧**:`./fleet.sh up` → `./fleet.sh autostart`(底层 PM2,详见 `PM2_MANUAL.md`)。
-- **Windows 侧**(os=win):Windows 上管理员跑一次 `win/install-autostart.ps1`(登录自启任务计划,跑 `\\wsl.localhost` 路径下各 MCP 的 `run.ps1`,无需二次 clone)。
-- 跨边界靠 `.wslconfig` 的 `networkingMode=mirrored`,`localhost` 双向可达(已开启),故 Win/WSL 两侧 Claude 用同一份 `gen_config.py` 输出。
+- **Windows 侧**(os=win):Windows 上管理员跑一次 `win/install-autostart.ps1`(登录自启,跑 `\\wsl.localhost` 路径下各 MCP 的 `run.ps1`)。
+- 跨边界靠 `.wslconfig` 的 `networkingMode=mirrored`(已开),两侧 Claude 用同一份 `gen_config.py` 输出。
+
+## 可复现 / 可测
+
+- 依赖锁定:python 用 `requirements.lock`(`uv pip compile`,run 脚本优先用它),node 用提交的 `package-lock.json`(`npm ci`),md2pdf 系统层用 `flake.lock` 钉 Chromium/字体。
+- `./fleet.sh validate` + `./fleet.sh test` 是每次改动的安全闸门;`--live` 还会真起来 curl `/health`。

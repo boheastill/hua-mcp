@@ -1,20 +1,16 @@
-"""identity MCP — detect the real running model / provider / runtime.
-
-Self-contained: reads its own mcp.json for name+port, registers the checks from
-checker.py, serves streamable-http (or stdio with --stdio).
-"""
-import json
+"""identity MCP — detect the real running model / provider / runtime (9 checks)."""
 import pathlib
 import sys
 
-from mcp.server.fastmcp import FastMCP
+for _p in pathlib.Path(__file__).resolve().parents:
+    if (_p / "huamcp.py").exists():
+        sys.path.insert(0, str(_p))
+        break
+import huamcp  # noqa: E402
 
-import checker
+import checker  # noqa: E402
 
-HERE = pathlib.Path(__file__).resolve().parent
-META = json.loads((HERE / "mcp.json").read_text(encoding="utf-8"))
-
-mcp = FastMCP(META["name"], host="0.0.0.0", port=META["port"])
+mcp = huamcp.server(__file__)
 
 for _fn in (
     checker.check_model_identity,
@@ -29,13 +25,5 @@ for _fn in (
 ):
     mcp.tool()(_fn)
 
-
-@mcp.custom_route("/health", methods=["GET"])
-async def _health(request):
-    from starlette.responses import JSONResponse
-
-    return JSONResponse({"ok": True, "mcp": META["name"], "os": META["os"], "port": META["port"]})
-
-
 if __name__ == "__main__":
-    mcp.run() if "--stdio" in sys.argv else mcp.run(transport="streamable-http")
+    huamcp.run(mcp)

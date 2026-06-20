@@ -1,35 +1,27 @@
-"""md2pdf — heavy-isolated MCP server (markdown → premium PDF).
+"""md2pdf — markdown → premium PDF (offline, mermaid-capable).
 
-One process, two faces:
-  • MCP tool  `md_to_pdf`   — for agents (Claude on WSL / Windows, via the fleet port).
-  • REST      `POST /pdf`   — for the future public website endpoint (email-gated later).
-  • REST      `GET  /health`— fleet health probe.
+Two faces, one process:
+  • MCP tool `md_to_pdf` — for agents (Claude on WSL / Windows, via the fleet port).
+  • REST     `POST /pdf` — for the future public website endpoint.
 
-Transport:
-  default            → stdio (local single-client).
-  --http / --sse     → network port 8010 (streamable-http), reachable cross-OS thanks
-                       to WSL2 mirrored networking. This is the fleet-canonical mode.
-
-Auth seam: if env MD2PDF_TOKEN is set, REST routes require `Authorization: Bearer <token>`.
-When unset it is a no-op — so going public later is a config flip, not a rewrite.
+Bind / health / auth / transport are handled by huamcp (secure by default: 127.0.0.1;
+set MD2PDF_TOKEN and run --public to expose with Bearer auth). `GET /health` is open.
 """
-
-import os
 import base64
-import json
+import pathlib
+import sys
 import tempfile
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+for _p in pathlib.Path(__file__).resolve().parents:
+    if (_p / "huamcp.py").exists():
+        sys.path.insert(0, str(_p))
+        break
+import huamcp  # noqa: E402
 
-from renderer import Md2Pdf
+from renderer import Md2Pdf  # noqa: E402
 
-META = json.loads((Path(__file__).resolve().parent / "mcp.json").read_text(encoding="utf-8"))
-PORT = int(os.environ.get("MD2PDF_PORT", META["port"]))
-TOKEN = os.environ.get("MD2PDF_TOKEN")  # None => auth disabled (local/dev)
-VERSION = "0.1.0"
-
-mcp = FastMCP(META["name"], host="0.0.0.0", port=PORT)
+mcp = huamcp.server(__file__)
 _renderer = Md2Pdf()
 
 
@@ -40,9 +32,7 @@ def _render(md: str, *, title=None, subtitle=None, author=None, lang="en") -> by
     tmp = Path(tempfile.mkdtemp(prefix="md2pdf_"))
     out = tmp / "out.pdf"
     try:
-        _renderer.render_to_pdf(
-            md, str(out), title=title, subtitle=subtitle, author=author, lang=lang
-        )
+        _renderer.render_to_pdf(md, str(out), title=title, subtitle=subtitle, author=author, lang=lang)
         return out.read_bytes()
     finally:
         # Best-effort cleanup; never let cleanup mask a render error.
@@ -53,7 +43,6 @@ def _render(md: str, *, title=None, subtitle=None, author=None, lang="en") -> by
             pass
 
 
-# --- MCP tool ----------------------------------------------------------------
 @mcp.tool()
 def md_to_pdf(
     markdown: str,
@@ -94,36 +83,18 @@ def md_to_pdf(
     return result
 
 
-# --- REST faces (for the future public website + health) ---------------------
-def _check_auth(request) -> bool:
-    if not TOKEN:
-        return True
-    auth = request.headers.get("authorization", "")
-    return auth == f"Bearer {TOKEN}"
-
-
-@mcp.custom_route("/health", methods=["GET"])
-async def health(request):
-    from starlette.responses import JSONResponse
-
-    return JSONResponse({"ok": True, "service": "md2pdf", "version": VERSION})
-
-
 @mcp.custom_route("/pdf", methods=["POST"])
 async def pdf_endpoint(request):
+    # Auth (when a token is configured) is enforced uniformly by huamcp middleware.
     from starlette.responses import JSONResponse, Response
 
-    if not _check_auth(request):
-        return JSONResponse({"detail": "unauthorized"}, status_code=401)
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"detail": "invalid JSON body"}, status_code=400)
-
-    md = (body or {}).get("md", "")
     try:
         pdf = _render(
-            md,
+            (body or {}).get("md", ""),
             title=body.get("title"),
             subtitle=body.get("subtitle"),
             author=body.get("author"),
@@ -142,16 +113,4 @@ async def pdf_endpoint(request):
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="md2pdf MCP server")
-    parser.add_argument("--http", action="store_true", help=f"Run streamable-http on :{PORT}")
-    parser.add_argument("--sse", action="store_true", help=f"Run legacy SSE on :{PORT}")
-    args = parser.parse_args()
-
-    if args.sse:
-        mcp.run(transport="sse")
-    elif args.http:
-        mcp.run(transport="streamable-http")
-    else:
-        mcp.run()  # stdio
+    huamcp.run(mcp)

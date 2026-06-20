@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# fleet — one entry point for the WSL side of the hua-mcp fleet.
-# Truth = each MCP's mcp.json (win/<name>/, wsl/<name>/). This script discovers them
-# by scanning, so adding an MCP needs no edit here.
+# fleet — one entry point for the hua-mcp fleet (WSL side).
+# Truth = each MCP's mcp.json (win/<name>/, wsl/<name>/). Everything is discovered by
+# scanning, so adding/removing an MCP needs no edit here.
 #
 #   ./fleet.sh doctor      check toolchain (uv / node / pm2 / nix)
-#   ./fleet.sh list        list all discovered MCPs (name / port / os)
+#   ./fleet.sh list        list discovered MCPs (name / port / os)
+#   ./fleet.sh validate    lint every mcp.json (keys, unique ports, band, files) — exits 1 on error
+#   ./fleet.sh test        per-MCP import smoke (venv + `import server`); --live also boots + /health
 #   ./fleet.sh up          PM2-start every wsl MCP (one process each)
 #   ./fleet.sh down        stop & remove them from PM2
 #   ./fleet.sh restart     restart all
 #   ./fleet.sh status      pm2 list
 #   ./fleet.sh logs [name] pm2 logs (optionally one app)
-#   ./fleet.sh health      curl /health on every MCP (from its mcp.json)
+#   ./fleet.sh health      curl /health on every MCP
 #   ./fleet.sh config      print client .mcp.json (scans mcp.json)
 #   ./fleet.sh autostart   persist PM2 + print the boot-survival command
-#
-# Windows side (os=win) is separate: run win/install-autostart.ps1 once on Windows.
 set -euo pipefail
 cd "$(dirname "$0")"
 PY=python3
@@ -23,8 +23,7 @@ PY=python3
 _mcps() {
   $PY - <<'PY'
 import json, pathlib
-root = pathlib.Path('.')
-for mf in sorted(root.glob('*/*/mcp.json')):
+for mf in sorted(pathlib.Path('.').glob('*/*/mcp.json')):
     if any(p.startswith('_') for p in mf.parts):
         continue
     m = json.loads(mf.read_text(encoding='utf-8'))
@@ -36,26 +35,88 @@ cmd="${1:-help}"; shift || true
 case "$cmd" in
   doctor)
     ok=1
-    for t in uv node pm2; do
-      if command -v "$t" >/dev/null 2>&1; then echo "  ✓ $t"; else echo "  ✗ $t MISSING"; ok=0; fi
-    done
-    if command -v nix >/dev/null 2>&1 || [ -x /nix/var/nix/profiles/default/bin/nix ]; then echo "  ✓ nix (md2pdf)"; else echo "  ✗ nix MISSING"; ok=0; fi
+    for t in uv node pm2; do command -v "$t" >/dev/null 2>&1 && echo "  ✓ $t" || { echo "  ✗ $t MISSING"; ok=0; }; done
+    { command -v nix >/dev/null 2>&1 || [ -x /nix/var/nix/profiles/default/bin/nix ]; } && echo "  ✓ nix (md2pdf)" || { echo "  ✗ nix MISSING"; ok=0; }
     [ $ok = 1 ] && echo "toolchain OK" || { echo "install the missing tools first"; exit 1; }
     ;;
+
   list)
     printf "%-12s %-6s %-5s %s\n" NAME PORT OS DIR
     _mcps | while read -r name port os dir heavy; do printf "%-12s %-6s %-5s %s\n" "$name" "$port" "$os" "$dir"; done
     ;;
+
+  validate)
+    $PY - <<'PY' || exit 1
+import json, pathlib, sys
+errors, warns, seen_ports = [], [], {}
+mans = [m for m in pathlib.Path('.').glob('*/*/mcp.json') if not any(p.startswith('_') for p in m.parts)]
+if not mans:
+    print("no MCPs found (expected win/<name>/mcp.json or wsl/<name>/mcp.json)"); sys.exit(1)
+for mf in sorted(mans):
+    d = mf.parent
+    try:
+        m = json.loads(mf.read_text(encoding='utf-8'))
+    except Exception as e:
+        errors.append(f"{mf}: invalid JSON ({e})"); continue
+    for k in ("name", "port", "os"):
+        if k not in m: errors.append(f"{d}: mcp.json missing required key '{k}'")
+    name, port, os_ = m.get("name"), m.get("port"), m.get("os")
+    if os_ not in ("win", "wsl"): errors.append(f"{d}: os must be 'win' or 'wsl', got {os_!r}")
+    if name and name != d.name: warns.append(f"{d}: name {name!r} != dir {d.name!r} (convention: match)")
+    if isinstance(port, int):
+        if port in seen_ports: errors.append(f"{d}: port {port} also used by {seen_ports[port]}")
+        seen_ports[port] = str(d)
+        band_ok = (os_ == "win" and 8001 <= port <= 8099) or (os_ == "wsl" and 8100 <= port <= 8999)
+        if not band_ok: warns.append(f"{d}: port {port} outside band (win 8001-8099 / wsl 8100-8999)")
+    else:
+        errors.append(f"{d}: port must be an int, got {port!r}")
+    if not (d / "server.py").exists(): errors.append(f"{d}: missing server.py")
+    if not (d / "requirements.txt").exists(): errors.append(f"{d}: missing requirements.txt")
+    launcher = "run.ps1" if os_ == "win" else "run.sh"
+    if not (d / launcher).exists(): errors.append(f"{d}: missing {launcher}")
+for w in warns: print(f"  ⚠ {w}")
+for e in errors: print(f"  ✗ {e}")
+print(f"validate: {len(mans)} MCP(s), {len(errors)} error(s), {len(warns)} warning(s)")
+sys.exit(1 if errors else 0)
+PY
+    ;;
+
+  test)
+    live=0; [ "${1:-}" = "--live" ] && live=1
+    echo "== validate ==" ; "$0" validate || exit 1
+    echo "== import smoke =="
+    fail=0
+    # include _template so the thing agents copy is also checked
+    dirs=$(_mcps | awk '{print $3" "$4}'); dirs="wsl _template
+$dirs"
+    printf '%s\n' "$dirs" | while read -r os dir; do
+      [ -z "${dir:-}" ] && continue
+      ( cd "$dir"
+        [ -d .venv ] || uv venv .venv >/dev/null 2>&1
+        req=requirements.txt; [ -f requirements.lock ] && req=requirements.lock
+        VIRTUAL_ENV="$PWD/.venv" uv pip install -q -r "$req" >/dev/null 2>&1
+        if .venv/bin/python -c "import server" >/tmp/hua_test.$$.log 2>&1; then
+          echo "  ✓ import $dir"
+        else
+          echo "  ✗ import $dir"; sed 's/^/      /' /tmp/hua_test.$$.log | tail -5; touch /tmp/hua_fail.$$
+        fi
+        rm -f /tmp/hua_test.$$.log )
+    done
+    [ -f /tmp/hua_fail.$$ ] && { rm -f /tmp/hua_fail.$$; echo "import smoke: FAIL"; exit 1; } || echo "import smoke: PASS"
+    if [ "$live" = 1 ]; then
+      echo "== live /health (wsl MCPs) =="
+      "$0" up >/dev/null 2>&1 || true
+      sleep 3; "$0" health
+    fi
+    ;;
+
   up)
     _mcps | while read -r name port os dir heavy; do
       [ "$os" = "wsl" ] || { echo "skip $name (os=$os, starts on Windows)"; continue; }
       mem=500M; [ "$heavy" = "1" ] && mem=1G
       app="mcp-$name-$port"
-      if pm2 describe "$app" >/dev/null 2>&1; then
-        pm2 restart "$app"
-      else
-        pm2 start "$dir/run.sh" --name "$app" --interpreter none --max-memory-restart "$mem"
-      fi
+      if pm2 describe "$app" >/dev/null 2>&1; then pm2 restart "$app"
+      else pm2 start "$dir/run.sh" --name "$app" --interpreter none --max-memory-restart "$mem"; fi
     done
     ;;
   down)      _mcps | while read -r name port os dir heavy; do pm2 delete "mcp-$name-$port" 2>/dev/null || true; done ;;
@@ -68,14 +129,11 @@ case "$cmd" in
       if curl -fsS --max-time 4 "http://localhost:$port/health" >/dev/null 2>&1; then
         echo "  ✓ $name :$port ($os)  $(curl -fsS http://localhost:$port/health)"
       else
-        echo "  ✗ $name :$port ($os)  DOWN${os:+ }$([ "$os" = win ] && echo '(runs on Windows host)')"
+        echo "  ✗ $name :$port ($os)  DOWN$([ "$os" = win ] && echo ' (runs on Windows host)')"
       fi
     done
     ;;
   config)    $PY gen_config.py ;;
-  autostart)
-    pm2 save
-    echo "Now run 'pm2 startup' and execute the sudo line it prints, so the fleet survives reboot."
-    ;;
-  help|*)    sed -n '2,21p' "$0" ;;
+  autostart) pm2 save; echo "Now run 'pm2 startup' and execute the sudo line it prints." ;;
+  help|*)    sed -n '2,23p' "$0" ;;
 esac
