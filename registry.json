@@ -12,8 +12,8 @@
       "public": false,
       "heavy": false,
       "host_os": "windows",
-      "tools": ["singbox"],
-      "desc": "Windows-only APIs + things that must run on the Windows host (clipboard, GUI, services, sing-box/Clash proxy control)."
+      "tools": ["vpn_restart"],
+      "desc": "Windows-only APIs + things that must run on the Windows host (clipboard, GUI, services). vpn_restart: atomically restart the sing-box proxy Windows service."
     },
     {
       "name": "wsl-agents",
@@ -26,8 +26,8 @@
       "public": false,
       "heavy": false,
       "host_os": "wsl",
-      "tools": ["identity_checker", "session_ref"],
-      "desc": "Linux-native tools: model identity checks, Claude Code session recovery (reff), bash/docker."
+      "tools": ["identity_checker"],
+      "desc": "Linux-native tools: model identity checks, bash/docker."
     },
     {
       "name": "cloud-api",

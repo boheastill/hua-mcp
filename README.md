@@ -8,10 +8,12 @@
 
 | Server | 端口 | 宿主 | 传输 | 工具 | 自启 |
 |---|---|---|---|---|---|
-| `win-agents` | 8001 | **Windows** | streamable-http | singbox | Win 任务计划 |
-| `wsl-agents` | 8002 | WSL | streamable-http | identity_checker, session_ref(reff) | PM2 |
+| `win-agents` | 8001 | **Windows** | streamable-http | vpn_restart（原子重启 sing-box 服务） | Win 任务计划 |
+| `wsl-agents` | 8002 | WSL | streamable-http | identity_checker | PM2 |
 | `cloud-api` | 8003 | WSL | streamable-http | （待填） | PM2 |
 | `md2pdf` | 8010 | WSL | streamable-http + REST `/pdf` | md_to_pdf | PM2 |
+
+> **范围**：hua-mcp 只收**个人通用**工具。项目/业务耦合的「企业级」MCP（如 `ics/ics-mcp-server`）留在各自项目里，**不并入**；需要时在 `registry.json` 登记其端口即可被同一份客户端配置发现。
 
 端口段约定：`8001-8009` 按环境划分的多工具服务器；`8010+` 重型 / 单一职责 / 拟公开服务（一个一进程一端口，崩了不连累别人）。**改拓扑只改 `registry.json`**，server 配置、客户端配置、健康检查都从它派生。
 
@@ -33,14 +35,26 @@ python shared/gen_config.py          # 从 registry.json 生成 .mcp.json 片段
 
 因为 `.wslconfig` 已开 `networkingMode=mirrored`，`localhost:<端口>` 双向可达，所以 **Windows 的 Claude 和 WSL 的 Claude 用同一份配置**，四个 server 都能调。
 
+## 一键运行（自包含，所有脚本都在仓库里）
+
+```bash
+./fleet.sh doctor     # 检查 uv/node/pm2/nix 是否就绪
+./fleet.sh up         # PM2 拉起全部 WSL 服务（wsl/cloud/md2pdf）
+./fleet.sh health     # 从 registry 逐个 curl /health
+./fleet.sh autostart  # pm2 save + 提示开机自启那行命令
+./fleet.sh config     # 生成客户端 .mcp.json
+# 其它：down / restart / status / logs [name]
+```
+
 ## 进程守护 / 开机自启
 
-- **WSL 侧**（wsl/cloud/md2pdf）：`pm2 start ecosystem.config.js`，再 `pm2 save && pm2 startup`（按提示执行那行 sudo 命令）。详见 `PM2_MANUAL.md`。
+- **WSL 侧**（wsl/cloud/md2pdf）：`./fleet.sh up` → `./fleet.sh autostart`（按提示执行 `pm2 startup` 给出的那行 sudo）。底层就是 PM2 + `ecosystem.config.js`，细节见 `PM2_MANUAL.md`。
 - **Windows 侧**（win-agents:8001）：在 Windows 上以管理员跑一次 `win_agents/install-autostart.ps1`（登录自启的任务计划，直接跑 WSL 路径下的 `run.ps1`，无需二次 clone）。
 
 ## 目录
 
 ```
+fleet.sh                   一键入口（up/down/health/config/autostart/doctor）
 registry.json              拓扑唯一真相源
 ecosystem.config.js        PM2（WSL 侧）
 shared/fleet.py            通用运行时：读 registry + 工具自动发现 + /health
