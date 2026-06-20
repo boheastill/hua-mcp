@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# hua-mcp pre-commit guardrail. Enabled via `./fleet.sh install-hooks`
+# (sets core.hooksPath=hooks). Fast + offline: structural lint + syntax check.
+# The deeper check (venv + import) is `./fleet.sh test` — run it before pushing.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+./fleet.sh validate || { echo "pre-commit: validate failed — fix mcp.json/structure above."; exit 1; }
+
+# Syntax-check all Python (instant, no venv/network).
+mapfile -t pyfiles < <(git ls-files '*.py')
+if [ ${#pyfiles[@]} -gt 0 ]; then
+  python3 -m py_compile "${pyfiles[@]}" || { echo "pre-commit: Python syntax error above."; exit 1; }
+fi
+echo "pre-commit: OK"

@@ -15,6 +15,9 @@
 #   ./fleet.sh health      curl /health on every MCP
 #   ./fleet.sh config      print client .mcp.json (scans mcp.json)
 #   ./fleet.sh autostart   persist PM2 + print the boot-survival command
+#   ./fleet.sh new <wsl|win> <name>   scaffold a new MCP (auto-assigns a free port)
+#   ./fleet.sh install-claude         register every MCP into Claude Code (user scope)
+#   ./fleet.sh install-hooks          enable the git pre-commit guardrail (hooks/)
 set -euo pipefail
 cd "$(dirname "$0")"
 PY=python3
@@ -135,5 +138,46 @@ $dirs"
     ;;
   config)    $PY gen_config.py ;;
   autostart) pm2 save; echo "Now run 'pm2 startup' and execute the sudo line it prints." ;;
-  help|*)    sed -n '2,23p' "$0" ;;
+
+  new)
+    os="${1:-}"; name="${2:-}"
+    { [ "$os" = wsl ] || [ "$os" = win ]; } && [ -n "$name" ] || { echo "usage: ./fleet.sh new <wsl|win> <name>"; exit 1; }
+    dest="$os/$name"
+    [ -e "$dest" ] && { echo "✗ $dest already exists"; exit 1; }
+    port=$($PY - "$os" <<'PY'
+import json, pathlib, sys
+os_ = sys.argv[1]
+used = {json.loads(m.read_text())['port'] for m in pathlib.Path('.').glob('*/*/mcp.json')}
+lo, hi = (8001, 8099) if os_ == 'win' else (8100, 8999)
+print(next(p for p in range(lo, hi + 1) if p not in used))
+PY
+)
+    cp -r _template "$dest"
+    rm -rf "$dest/.venv" "$dest/__pycache__" "$dest/requirements.lock"  # never inherit build artifacts
+    [ "$os" = wsl ] && rm -f "$dest/run.ps1" || rm -f "$dest/run.sh"
+    $PY - "$dest" "$name" "$os" "$port" <<'PY'
+import json, sys
+d, name, os_, port = sys.argv[1:5]
+p = f"{d}/mcp.json"; m = json.load(open(p))
+m.update(name=name, os=os_, port=int(port), public=False, desc=f"TODO: describe {name}")
+json.dump(m, open(p, "w"), indent=2, ensure_ascii=False); open(p, "a").write("\n")
+PY
+    echo "✓ created $dest on port $port"
+    echo "  next: edit $dest/server.py (write @mcp.tool()), then ./fleet.sh validate && ./fleet.sh test"
+    ;;
+
+  install-claude)
+    _mcps | while read -r name port os dir heavy; do
+      claude mcp remove "$name" -s user >/dev/null 2>&1 || true
+      claude mcp add --transport http "$name" "http://localhost:$port/mcp" -s user && echo "  + $name -> :$port"
+    done
+    echo "registered at user scope. Check: claude mcp list"
+    ;;
+
+  install-hooks)
+    git config core.hooksPath hooks && chmod +x hooks/* 2>/dev/null
+    echo "✓ git hooks enabled (core.hooksPath=hooks). pre-commit now runs ./fleet.sh validate."
+    ;;
+
+  help|*)    sed -n '2,26p' "$0" ;;
 esac
