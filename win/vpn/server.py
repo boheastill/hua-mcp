@@ -10,6 +10,10 @@ Servers:
   SSH: ssh -i D:/ssh-keys/lbqg.pem <user>@<ip>
 
 Groups: sg-auto (URLTest: hy2-sg/ss-sg), agent-group (Selector: agent-sg/agent-us)
+
+Fallback (when all proxy nodes unreachable):
+  Azure WireGuard: D:\\ssh-keys\\azure-au-wg.conf (connect in WireGuard client)
+  US OpenVPN: D:\\vpn-configs\\us-openvpn-tcp.ovpn (OpenVPN, TCP 443)
 """
 import json
 import os
