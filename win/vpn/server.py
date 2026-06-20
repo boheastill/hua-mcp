@@ -14,28 +14,43 @@ CONFIG FILE:
   C:\\Users\\bohea\\sing-box\\config.json -- the sing-box routing/outbound/DNS config.
   Architecture documentation: D:\\vpn-configs\\architecture.md
 
+SERVERS:
+  - SG (47.130.65.208): Primary. Hysteria2 (UDP 443) + SS2022 (TCP 8443).
+  - US (66.154.101.110): Backup. SS2022 (TCP 8443). Sometimes goes down.
+  - Azure (52.146.92.1): Emergency. WireGuard (UDP 51820). Manual activation.
+
+PROXY GROUPS:
+  - sg-auto (URLTest): Auto-selects between hy2-sg and ss-sg by latency.
+  - agent-group (Selector): For AI agents. Defaults to agent-sg. Can switch to agent-us.
+
 TOOLS (in typical workflow order):
-  1. vpn_status      -- see current state (which node, service running?)
-  2. vpn_logs        -- check recent errors before making changes
-  3. vpn_config      -- read the current config to understand rules
-  4. vpn_route_test  -- predict if a domain goes direct or proxy
-  5. vpn_config_write -- modify config (with validation, does NOT restart)
-  6. vpn_apply       -- write config + restart + verify (one-shot)
-  7. vpn_restart     -- just restart without config change (e.g. after network wedge)
+  1. vpn_status            -- see current state (which node, service running?)
+  2. vpn_connectivity_test -- actually test internet (not just API)
+  3. vpn_logs              -- check recent errors before making changes
+  4. vpn_config            -- read the current config to understand rules
+  5. vpn_route_test        -- predict if a domain goes direct or proxy
+  6. vpn_config_write      -- modify config (with validation, does NOT restart)
+  7. vpn_apply             -- write config + restart atomically (one-shot)
+  8. vpn_restart           -- just restart without config change
+  9. vpn_switch_node       -- quick-switch to a different outbound node
 
-TYPICAL WORKFLOW:
-  # Agent wants to add "example.com" to the proxy list:
-  1. cfg = vpn_config()                          # read current config
-  2. vpn_route_test(domain="example.com")        # confirm it currently goes direct
-  3. Modify the config dict: add "example.com" to the proxy domain_suffix list
-  4. vpn_apply(config_json=json.dumps(cfg))      # write + restart + verify
-  5. vpn_route_test(domain="example.com")        # confirm it now goes to sg-auto
+EMERGENCY PROCEDURE (network down during video call):
+  Step 1: vpn_connectivity_test() -- confirm what's broken
+  Step 2: vpn_restart() -- try quick fix
+  Step 3: if still broken, vpn_connectivity_test() again
+  Step 4: if SG node dead, vpn_switch_node(target="agent-us") -- try US node
+  Step 5: if all nodes dead, tell user:
+    "All proxy nodes are unreachable. Manual fallback:
+     Option A: Activate Azure WireGuard (D:\\ssh-keys\\azure-au-wg.conf)
+     Option B: Use phone hotspot as temporary internet"
+  DO NOT keep retrying the same broken node. Escalate after 2 failures.
 
-  # Agent suspects network is broken:
-  1. vpn_status()                                # is the service running?
-  2. vpn_logs(level="ERROR", lines=20)           # what errors are happening?
-  3. vpn_restart()                               # try restarting
-  4. vpn_status()                                # verify recovery
+TYPICAL WORKFLOW -- add a domain to proxy:
+  1. cfg = vpn_config()
+  2. vpn_route_test(domain="example.com")          # confirm it currently goes direct
+  3. Add "example.com" to cfg["route"]["rules"][...]["domain_suffix"]
+  4. vpn_apply(config_json=json.dumps(cfg))         # write + restart + verify
+  5. vpn_route_test(domain="example.com")           # confirm it now goes to sg-auto
 
 DESIGN PRINCIPLE:
   Agent manages the network entirely through these tools, never touching the
@@ -59,8 +74,8 @@ for _p in pathlib.Path(__file__).resolve().parents:
         break
 import huamcp  # noqa: E402
 
-SERVICE = "singbox"                       # Windows service name (sc stop/start)
-CLASH_API = "http://127.0.0.1:9090"       # sing-box Clash-compatible control API
+SERVICE = "singbox"
+CLASH_API = "http://127.0.0.1:9090"
 CACHE_DB = os.path.expanduser("~\\sing-box\\cache.db")
 LOG_FILE = os.path.expanduser("~\\sing-box\\sing-box.log")
 CONFIG_FILE = os.path.expanduser("~\\sing-box\\config.json")
@@ -134,9 +149,7 @@ def _ip_in_cidr(ip: str, cidrs: List[str]) -> bool:
 def _simulate_route(config: dict, domain: str = "", ip: str = "") -> Dict[str, Any]:
     """Simulate sing-box sequential rule matching. Returns predicted outbound + matched rule.
 
-    Note: process_name rules cannot be simulated (need running process context).
-    rule_set rules (geosite-cn) are skipped (need the binary rule file).
-    These will fall through to the 'final' outbound.
+    Limitations: process_name rules and rule_set (geosite-cn) are skipped.
     """
     rules = config.get("route", {}).get("rules", [])
 
@@ -150,7 +163,7 @@ def _simulate_route(config: dict, domain: str = "", ip: str = "") -> Dict[str, A
     for rule in rules:
         outbound = rule.get("outbound")
         if not outbound:
-            continue  # system rules (sniff, hijack-dns, reject)
+            continue
 
         if rule.get("ip_is_private") and resolved_ip:
             import ipaddress
@@ -161,7 +174,7 @@ def _simulate_route(config: dict, domain: str = "", ip: str = "") -> Dict[str, A
                 pass
 
         if rule.get("process_name"):
-            continue  # can't simulate
+            continue
 
         if rule.get("domain_suffix") and domain:
             if _domain_matches(domain, rule["domain_suffix"]):
@@ -172,7 +185,7 @@ def _simulate_route(config: dict, domain: str = "", ip: str = "") -> Dict[str, A
                 return {"outbound": outbound, "rule": f"ip_cidr ({len(rule['ip_cidr'])} ranges)", "matched": True}
 
         if rule.get("rule_set"):
-            continue  # can't simulate locally
+            continue
 
     final = config.get("route", {}).get("final", "sg-auto")
     return {"outbound": final, "rule": "final (default)", "matched": True}
@@ -188,15 +201,17 @@ def vpn_restart() -> Dict[str, Any]:
     start service -> poll Clash API up to 5 times.
 
     When to call:
-      - After editing config.json manually (not via vpn_config_write)
+      - After editing config.json manually
       - When the network is wedged (no connectivity, API unreachable)
-      - As a last resort before investigating deeper
+      - First attempt when network goes down
 
     Returns:
       ok (bool): True if Clash API answered within 15s.
       sc_start_ok (bool): Whether sc start returned success.
       steps (list[str]): Human-readable log of what happened.
       hint (str|None): Error guidance if ok=False.
+
+    If ok=False twice in a row, DO NOT retry -- switch nodes instead.
     """
     steps: List[str] = []
 
@@ -244,7 +259,8 @@ def vpn_restart() -> Dict[str, Any]:
         "steps": steps,
         "hint": None if verified else (
             f"Restart failed. Try manually: sc stop {SERVICE} && sc start {SERVICE}. "
-            "If still broken, check vpn_logs(level='ERROR') for root cause."
+            "If still broken, use vpn_switch_node to try a different server, "
+            "or check vpn_logs(level='ERROR') for root cause."
         ),
     }
 
@@ -300,6 +316,76 @@ def vpn_status() -> Dict[str, Any]:
 
 
 @mcp.tool()
+def vpn_connectivity_test() -> Dict[str, Any]:
+    """Test actual internet connectivity through the proxy. Not just API -- real traffic.
+
+    When to call:
+      - FIRST thing when network goes down (before restarting)
+      - After vpn_restart to confirm recovery
+      - To distinguish "proxy node down" from "TUN adapter broken" from "DNS broken"
+
+    Tests performed:
+      1. Clash API reachable (local control plane)
+      2. Google via proxy (confirms proxy path works end-to-end)
+      3. Baidu direct (confirms direct path works, TUN is functional)
+
+    Returns:
+      api_ok (bool): Clash API responded.
+      proxy_ok (bool): Could reach google.com through proxy (status 200).
+      direct_ok (bool): Could reach baidu.com directly (status 200).
+      diagnosis (str): Plain-language diagnosis of what's broken.
+
+    Interpretation:
+      - api_ok=True, proxy_ok=True, direct_ok=True  => Network is fine
+      - api_ok=True, proxy_ok=False, direct_ok=True => Proxy node dead, need to switch
+      - api_ok=True, proxy_ok=False, direct_ok=False => TUN adapter broken, need restart
+      - api_ok=False, proxy_ok=False, direct_ok=True => sing-box service crashed
+      - api_ok=False, proxy_ok=False, direct_ok=False => System network issue, not sing-box
+    """
+    results = {}
+
+    # Test 1: Clash API
+    try:
+        r = requests.get(f"{CLASH_API}/version", timeout=4)
+        results["api_ok"] = r.status_code == 200
+    except Exception:
+        results["api_ok"] = False
+
+    # Test 2: Google via proxy
+    try:
+        r = requests.get("https://www.google.com", timeout=8,
+                         proxies={"https": "http://127.0.0.1:7890"})
+        results["proxy_ok"] = r.status_code == 200
+    except Exception:
+        results["proxy_ok"] = False
+
+    # Test 3: Baidu direct
+    try:
+        r = requests.get("https://www.baidu.com", timeout=5)
+        results["direct_ok"] = r.status_code == 200
+    except Exception:
+        results["direct_ok"] = False
+
+    # Diagnosis
+    api, proxy, direct = results["api_ok"], results["proxy_ok"], results["direct_ok"]
+    if api and proxy and direct:
+        diag = "Network is healthy. All paths working."
+    elif api and not proxy and direct:
+        diag = "Proxy node is dead (SG server unreachable). Use vpn_switch_node to try US or restart."
+    elif api and not proxy and not direct:
+        diag = "TUN adapter broken. Use vpn_restart to reinitialize."
+    elif not api and not proxy and direct:
+        diag = "sing-box service crashed. Use vpn_restart."
+    elif not api and not proxy and not direct:
+        diag = "System network issue. Check WiFi/Ethernet, not sing-box."
+    else:
+        diag = "Partial connectivity. Check vpn_logs for details."
+
+    results["diagnosis"] = diag
+    return results
+
+
+@mcp.tool()
 def vpn_logs(lines: int = 30, level: Optional[str] = None) -> Dict[str, Any]:
     """Read recent sing-box log lines.
 
@@ -322,7 +408,8 @@ def vpn_logs(lines: int = 30, level: Optional[str] = None) -> Dict[str, Any]:
     Common errors:
       - "connection upload closed" + "forcibly closed by remote host" = server dropped connection
       - "i/o timeout" on direct = domestic service unreachable
-      - "dial tcp ... actively refused it" = remote port not listening
+      - "dial tcp ... actively refused it" = remote port not listening (node down)
+      - "connection download closed" = proxy node stopped responding
     """
     lines = min(max(lines, 1), 200)
 
@@ -493,6 +580,71 @@ def vpn_apply(config_json: str) -> Dict[str, Any]:
         "phase": "restart",
         "write": write_result,
         "restart": restart_result,
+    }
+
+
+@mcp.tool()
+def vpn_switch_node(target: str = "sg-auto") -> Dict[str, Any]:
+    """Quick-switch a proxy group to a different outbound node (no config change needed).
+
+    When to call:
+      - Current node is dead but sing-box is running (vpn_connectivity_test shows
+        proxy_ok=False but api_ok=True)
+      - Want to force traffic through a specific server
+      - Emergency fallback during video call outage
+
+    Args:
+      target: The outbound or group to switch to. Options:
+        - "sg-auto" (default): Auto-select between hy2-sg and ss-sg
+        - "ss-sg": Force Singapore SS2022 (TCP, more stable than Hy2)
+        - "hy2-sg": Force Singapore Hysteria2 (UDP, faster when stable)
+        - "agent-us": Route through US server (66.154.101.110)
+        - "agent-sg": Route through Singapore with h2mux (for agent traffic)
+
+    How it works: Calls the Clash API to switch the selector group's active node.
+    This is TEMPORARY -- it does not modify config.json. Changes are lost on restart.
+
+    Returns:
+      ok (bool): Whether the switch was acknowledged by the API.
+      target (str): The node switched to.
+      note (str): Reminder that this is temporary.
+
+    For permanent changes, use vpn_apply to modify config.json instead.
+    """
+    # Map friendly names to their group and target
+    node_map = {
+        "sg-auto": {"group": "sg-auto", "target": "sg-auto"},
+        "ss-sg": {"group": "sg-auto", "target": "ss-sg"},
+        "hy2-sg": {"group": "sg-auto", "target": "hy2-sg"},
+        "agent-us": {"group": "agent-group", "target": "agent-us"},
+        "agent-sg": {"group": "agent-group", "target": "agent-sg"},
+    }
+
+    if target not in node_map:
+        return {
+            "ok": False,
+            "error": f"Unknown target '{target}'. Valid options: {list(node_map.keys())}",
+        }
+
+    info = node_map[target]
+    group = info["group"]
+    node = info["target"]
+
+    try:
+        r = requests.put(
+            f"{CLASH_API}/proxies/{group}",
+            json={"name": node},
+            timeout=4,
+        )
+        ok = r.status_code == 204
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+    return {
+        "ok": ok,
+        "target": target,
+        "group": group,
+        "note": "Temporary switch. Lost on restart. Use vpn_apply for permanent changes.",
     }
 
 
