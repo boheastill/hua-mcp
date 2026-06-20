@@ -45,9 +45,12 @@ both directions).
 # edit wsl/myname/server.py  (write @mcp.tool());  add deps to requirements.txt
 uv pip compile requirements.txt -o requirements.lock   # in the MCP dir
 ./fleet.sh validate && ./fleet.sh test                 # MUST pass
-./fleet.sh up                  # wsl; for win re-run win/install-autostart.ps1
-./fleet.sh install-claude      # (re)register with Claude Code, user scope
+./fleet.sh sync                # wsl: start + persist + register with Claude + health
+                               # (win: re-run win/install-autostart.ps1 on the Windows host)
 ```
+`sync` treats every wsl MCP identically — nothing is special-cased per MCP. After
+`./fleet.sh sync` the new MCP is running, survives reboot (once `pm2 startup` was set up
+once), and is callable from Claude Code, exactly like the existing ones.
 
 ## Edit / remove an MCP
 

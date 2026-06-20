@@ -18,6 +18,7 @@
 #   ./fleet.sh new <wsl|win> <name>   scaffold a new MCP (auto-assigns a free port)
 #   ./fleet.sh install-claude         register every MCP into Claude Code (user scope)
 #   ./fleet.sh install-hooks          enable the git pre-commit guardrail (hooks/)
+#   ./fleet.sh sync                    up + pm2 save + register-with-Claude + health (make ALL wsl MCPs live)
 set -euo pipefail
 cd "$(dirname "$0")"
 PY=python3
@@ -177,6 +178,15 @@ PY
   install-hooks)
     git config core.hooksPath hooks && chmod +x hooks/* 2>/dev/null
     echo "✓ git hooks enabled (core.hooksPath=hooks). pre-commit now runs ./fleet.sh validate."
+    ;;
+
+  sync)
+    # Make every wsl MCP live the same way (no per-MCP special-casing):
+    # start under PM2 -> persist for boot -> register with Claude -> health.
+    "$0" up
+    pm2 save >/dev/null 2>&1 || true
+    "$0" install-claude
+    "$0" health
     ;;
 
   help|*)    sed -n '2,26p' "$0" ;;
