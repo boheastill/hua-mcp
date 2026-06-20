@@ -6,6 +6,15 @@
 
 $ErrorActionPreference = "Stop"
 
+# Self-elevate: registering a scheduled task needs admin. If not elevated, relaunch
+# this script as admin (UAC prompt) and exit the non-elevated instance.
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "Not elevated — relaunching as admin (accept the UAC prompt)…"
+    Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    exit
+}
+
 # Path to this win/ dir as seen from Windows. Adjust <distro> if not "Ubuntu".
 $WinDir = "\\wsl.localhost\Ubuntu\home\bohea\code-workspace\hua-mcp\win"
 # $WinDir = "C:\hua-mcp\win"   # <- uncomment if you cloned to C: instead
@@ -23,5 +32,6 @@ Register-ScheduledTask -TaskName "hua-mcp-win" `
     -Action $action -Trigger $trigger -Settings $settings -Force `
     -Description "hua-mcp Windows-hosted MCP servers (win/*)"
 
-Write-Host "Registered. Start now with:  Start-ScheduledTask -TaskName hua-mcp-win"
-Write-Host "Verify each win MCP, e.g.:    curl http://localhost:8001/health"
+Start-ScheduledTask -TaskName "hua-mcp-win"
+Write-Host "Registered AND started. It will also auto-start at every login."
+Write-Host "Verify (give it ~15s):  curl.exe http://localhost:8001/health"
