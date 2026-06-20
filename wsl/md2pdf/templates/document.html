@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title | default('Document') }}</title>
-    <!-- Premium fonts; degrades gracefully to Nix-provided Noto CJK when offline -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         {% include 'theme.css' %}
@@ -19,16 +18,20 @@
                 {% if subtitle %}<p class="subtitle">{{ subtitle }}</p>{% endif %}
             </div>
             <div class="meta-info">
-                {% if date %}<p>{{ date }}</p>{% endif %}
-                {% if author %}<p>{{ author }}</p>{% endif %}
+                {% if author %}<p class="author">{{ author }}</p>{% endif %}
+                {% if date %}<p class="date">{{ date }}</p>{% endif %}
             </div>
         </header>
         {% endif %}
 
-        <!-- Markdown content injected here (mermaid blocks pre-rendered to inline SVG) -->
         <main class="markdown-body">
             {{ content }}
         </main>
+
+        <footer class="doc-footer">
+            <span>{{ author | default('') }}</span>
+            <span class="page-num"></span>
+        </footer>
     </div>
 </body>
 </html>
