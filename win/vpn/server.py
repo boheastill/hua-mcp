@@ -10,15 +10,6 @@ Servers:
   SSH: ssh -i D:/ssh-keys/lbqg.pem <user>@<ip>
 
 Groups: sg-auto (URLTest: hy2-sg/ss-sg), agent-group (Selector: agent-sg/agent-us)
-
-Emergency (user says network down):
-  1. vpn_connectivity_test() -- what's broken
-  2. vpn_restart() -- fix. ok=True? done.
-  3. vpn_switch_node(target="ss-sg") -- SG UDP dead, try TCP
-  4. vpn_switch_node(target="agent-us") -- try US
-  5. SSH to server, check if service running
-  6. Last resort: tell user to activate WireGuard or OpenVPN
-  Rule: never retry same node more than twice.
 """
 import json
 import os
