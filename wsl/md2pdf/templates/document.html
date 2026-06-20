@@ -28,10 +28,12 @@
             {{ content }}
         </main>
 
-        <footer class="doc-footer">
-            <span>{{ author | default('') }}</span>
-            <span class="page-num"></span>
-        </footer>
+        {% if author %}
+        <div class="doc-signature">
+            <div class="signature-line"></div>
+            <p class="signature-name">{{ author }}</p>
+        </div>
+        {% endif %}
     </div>
 </body>
 </html>

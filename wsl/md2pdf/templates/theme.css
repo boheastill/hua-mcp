@@ -68,14 +68,23 @@ body {
     margin: 2px 0;
 }
 
-/* Footer */
-.doc-footer {
-    margin-top: 40px;
-    padding-top: 10px;
-    border-top: 1px solid var(--border-color);
-    font-size: 10px;
-    color: #94A3B8;
+/* Signature */
+.doc-signature {
+    margin-top: 60px;
     text-align: center;
+}
+
+.signature-line {
+    width: 200px;
+    border-top: 1px solid var(--primary-color);
+    margin: 0 auto 12px auto;
+}
+
+.signature-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--primary-color);
+    margin: 0;
 }
 
 /* Content */
