@@ -68,17 +68,14 @@ body {
     margin: 2px 0;
 }
 
-/* Footer - use @page for PDF page margins */
-@page {
-    margin-bottom: 40px;
-}
-
+/* Footer */
 .doc-footer {
+    margin-top: 40px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-color);
     font-size: 10px;
     color: #94A3B8;
     text-align: center;
-    padding-top: 8px;
-    border-top: 1px solid var(--border-color);
 }
 
 /* Content */
