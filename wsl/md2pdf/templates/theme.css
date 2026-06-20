@@ -49,6 +49,7 @@ body {
     margin-top: 10px;
     font-size: 12px;
     color: #64748B;
+    text-align: right;
 }
 
 .meta-info p {
