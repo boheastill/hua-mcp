@@ -28,7 +28,7 @@ body {
     margin-bottom: 25px;
     display: flex;
     justify-content: space-between;
-    align-items: flex-end;
+    align-items: flex-start;
 }
 
 .branding h1 {
