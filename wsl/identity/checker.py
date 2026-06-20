@@ -485,19 +485,3 @@ def comprehensive_identity_check() -> Dict[str, Any]:
 
     return results
 
-
-def register(mcp):
-    """Auto-discovery hook (see shared/fleet.py): register all identity tools."""
-    for fn in (
-        check_model_identity,
-        check_runtime_environment,
-        check_api_connectivity,
-        get_model_config,
-        analyze_model_characteristics,
-        verify_api_endpoint,
-        check_network_connections,
-        check_process_info,
-        comprehensive_identity_check,
-    ):
-        mcp.tool()(fn)
-

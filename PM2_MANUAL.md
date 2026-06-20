@@ -11,11 +11,13 @@
 npm install -g pm2
 ```
 
-进入项目根目录，使用我们在 `ecosystem.config.js` 中定义好的配置一键启动所有服务：
+进入项目根目录，用 `fleet.sh` 一键启动所有 WSL 侧 MCP（它扫描各 `wsl/<name>/mcp.json`，按 `mcp-<name>-<port>` 注册到 PM2，无需中心配置文件）：
 ```bash
 cd /home/bohea/code-workspace/hua-mcp
-pm2 start ecosystem.config.js
+./fleet.sh up          # 等价于对每个 wsl MCP 跑 pm2 start <dir>/run.sh
+./fleet.sh status      # = pm2 ls
 ```
+（已无 `ecosystem.config.js`；进程名形如 `mcp-identity-8101`、`mcp-md2pdf-8110`。）
 
 ---
 
@@ -54,7 +56,7 @@ pm2 startup
 - **查看服务日志（排错必备）**
   ```bash
   pm2 logs                # 查看所有服务的混合日志
-  pm2 logs mcp-wsl-8002   # 仅查看 WSL 服务的日志
+  pm2 logs mcp-identity-8101   # 仅查看 WSL 服务的日志
   pm2 logs --lines 100    # 查看最后 100 行日志
   ```
 
@@ -64,13 +66,13 @@ pm2 startup
 
 - **重启服务**
   ```bash
-  pm2 restart mcp-wsl-8002  # 重启单个服务
+  pm2 restart mcp-identity-8101  # 重启单个服务
   pm2 restart all           # 重启所有服务 (修改代码后常用)
   ```
 
 - **停止服务**
   ```bash
-  pm2 stop mcp-wsl-8002     # 停止单个服务
+  pm2 stop mcp-identity-8101     # 停止单个服务
   pm2 stop all              # 停止所有服务
   ```
 
@@ -81,7 +83,7 @@ pm2 startup
 
 - **删除/移除服务 (不再用 PM2 接管它)**
   ```bash
-  pm2 delete mcp-wsl-8002   # 删除单个
+  pm2 delete mcp-identity-8101   # 删除单个
   pm2 delete all            # 清空列表
   ```
 
@@ -90,6 +92,6 @@ pm2 startup
 ## 5. 常见问题排查
 
 如果某个 MCP Server 一直显示 `errored` 或者不断重启：
-1. 先用 `pm2 logs mcp-wsl-8002` 看最后报错的具体信息。
+1. 先用 `pm2 logs mcp-identity-8101` 看最后报错的具体信息。
 2. 确认 `uv` 是否在系统 PATH 中，如果 PM2 找不到 `uv`，服务会起不来。
 3. 检查代码本身是否有 SyntaxError 导致一启动就崩溃。

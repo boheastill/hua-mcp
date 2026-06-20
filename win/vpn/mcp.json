@@ -1,0 +1,7 @@
+{
+  "name": "vpn",
+  "port": 8001,
+  "os": "win",
+  "public": false,
+  "desc": "Restart the network proxy (sing-box Windows service). Runs on the Windows host."
+}

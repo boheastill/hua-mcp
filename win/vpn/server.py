@@ -1,30 +1,39 @@
-"""vpn — restart the network proxy (sing-box) for the agent.
+"""vpn MCP — restart the network proxy (sing-box) for the agent.
 
-The live proxy runs as a **Windows service** (`sc`-controlled) on the Windows host,
-so this lives in win_agents. We deliberately expose ONLY a restart: switching nodes /
-speed tests / SSH probes were dropped — the agent just needs to bring the link back
-when it wedges (e.g. after a config edit, or a stuck TUN adapter).
+Runs on the Windows host (the proxy is a `sc`-controlled Windows service). Exposes
+ONLY a restart: switching nodes / speed tests / SSH probes were intentionally dropped
+— the agent just needs to bring the link back when it wedges.
 
-Restart is atomic and self-verifying: stop → wait for TUN release → clear a poisoned
-cache → start → poll the local Clash API to confirm it's actually alive (works even
-while the internet is down, since the API is on 127.0.0.1).
+Restart is atomic and self-verifying: stop -> wait for TUN release -> clear a poisoned
+cache -> start -> poll the local Clash API (127.0.0.1, works even when the internet
+is down). Self-contained: reads its own mcp.json for name+port.
 """
+import json
 import os
+import pathlib
 import subprocess
+import sys
 import time
 from typing import Any, Dict, List
 
 import requests
+from mcp.server.fastmcp import FastMCP
+
+HERE = pathlib.Path(__file__).resolve().parent
+META = json.loads((HERE / "mcp.json").read_text(encoding="utf-8"))
 
 SERVICE = "singbox"                       # Windows service name (sc stop/start)
 CLASH_API = "http://127.0.0.1:9090"       # local control API used to verify liveness
 CACHE_DB = os.path.expanduser("~\\sing-box\\cache.db")  # corrupt cache => start timeout
 
+mcp = FastMCP(META["name"], host="0.0.0.0", port=META["port"])
 
+
+@mcp.tool()
 def vpn_restart() -> Dict[str, Any]:
     """Atomically restart the VPN/proxy (sing-box Windows service) and verify it's alive.
 
-    Steps: stop service → wait for TUN release → delete poisoned cache.db → start →
+    Steps: stop service -> wait for TUN release -> delete poisoned cache.db -> start ->
     poll the local Clash API. Call this after editing the proxy config, or when the
     network is wedged. Returns ok=True only once the control API answers.
     """
@@ -79,5 +88,12 @@ def vpn_restart() -> Dict[str, Any]:
     }
 
 
-def register(mcp):
-    mcp.tool()(vpn_restart)
+@mcp.custom_route("/health", methods=["GET"])
+async def _health(request):
+    from starlette.responses import JSONResponse
+
+    return JSONResponse({"ok": True, "mcp": META["name"], "os": META["os"], "port": META["port"]})
+
+
+if __name__ == "__main__":
+    mcp.run() if "--stdio" in sys.argv else mcp.run(transport="streamable-http")

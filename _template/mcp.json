@@ -1,0 +1,7 @@
+{
+  "name": "CHANGEME",
+  "port": 8199,
+  "os": "wsl",
+  "public": false,
+  "desc": "One-line description of what this MCP does."
+}

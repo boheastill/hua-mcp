@@ -16,6 +16,7 @@ When unset it is a no-op — so going public later is a config flip, not a rewri
 
 import os
 import base64
+import json
 import tempfile
 from pathlib import Path
 
@@ -23,11 +24,12 @@ from mcp.server.fastmcp import FastMCP
 
 from renderer import Md2Pdf
 
-PORT = int(os.environ.get("MD2PDF_PORT", "8010"))
+META = json.loads((Path(__file__).resolve().parent / "mcp.json").read_text(encoding="utf-8"))
+PORT = int(os.environ.get("MD2PDF_PORT", META["port"]))
 TOKEN = os.environ.get("MD2PDF_TOKEN")  # None => auth disabled (local/dev)
 VERSION = "0.1.0"
 
-mcp = FastMCP("md2pdf", host="0.0.0.0", port=PORT)
+mcp = FastMCP(META["name"], host="0.0.0.0", port=PORT)
 _renderer = Md2Pdf()
 
 

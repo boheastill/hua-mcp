@@ -1,0 +1,7 @@
+{
+  "name": "identity",
+  "port": 8101,
+  "os": "wsl",
+  "public": false,
+  "desc": "Detect the real running model/provider/runtime (9 checks)."
+}

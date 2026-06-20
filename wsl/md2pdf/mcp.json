@@ -1,0 +1,11 @@
+{
+  "name": "md2pdf",
+  "port": 8110,
+  "os": "wsl",
+  "public": true,
+  "heavy": true,
+  "needs": ["nix", "chromium", "node-mermaid-cli", "noto-cjk-fonts"],
+  "auth_env": "MD2PDF_TOKEN",
+  "rest": ["POST /pdf"],
+  "desc": "Markdown -> premium PDF (offline, mermaid). Own process (Chromium is heavy). Also serves REST /pdf for the future public website endpoint."
+}
