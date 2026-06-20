@@ -26,9 +26,6 @@ body {
     border-bottom: 2px solid var(--primary-color);
     padding-bottom: 15px;
     margin-bottom: 25px;
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
 }
 
 .branding h1 {
@@ -49,7 +46,7 @@ body {
 }
 
 .meta-info {
-    text-align: right;
+    margin-top: 10px;
     font-size: 12px;
     color: #64748B;
 }
