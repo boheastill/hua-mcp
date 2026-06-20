@@ -1,21 +1,50 @@
-"""vpn MCP — manage the network proxy (sing-box) for the agent.
+"""vpn MCP -- manage the network proxy (sing-box) for the agent.
 
-Runs on the Windows host (the proxy is a `sc`-controlled Windows service). Exposes:
-  - vpn_restart:   atomic stop → clear cache → start → verify
-  - vpn_status:    query proxy groups, selected nodes, service state
-  - vpn_logs:      read recent sing-box log lines (optionally filtered by level)
-  - vpn_config:    read the current sing-box config.json
-  - vpn_config_write: write config.json with JSON validation (does NOT restart)
-  - vpn_apply:     write config + restart atomically (the "one-shot" tool)
-  - vpn_route_test: simulate rule matching to predict if a domain/IP goes direct or proxy
+WHAT THIS MCP DOES:
+  Provides a safe interface for agents to manage the Windows network proxy
+  (sing-box) without touching the filesystem or running shell commands.
 
-Design principle: agent manages the network entirely through these tools,
-never touching the filesystem or running shell commands directly.
+WHAT IS SING-BOX:
+  sing-box is a universal proxy platform running as a Windows service ("singbox").
+  It intercepts all traffic via a TUN adapter (172.19.0.1) and routes it based on
+  rules: direct for domestic/whitelisted sites, proxy (via Singapore VPS) for
+  everything else. The Clash-compatible API at 127.0.0.1:9090 exposes status.
+
+CONFIG FILE:
+  C:\\Users\\bohea\\sing-box\\config.json -- the sing-box routing/outbound/DNS config.
+  Architecture documentation: D:\\vpn-configs\\architecture.md
+
+TOOLS (in typical workflow order):
+  1. vpn_status      -- see current state (which node, service running?)
+  2. vpn_logs        -- check recent errors before making changes
+  3. vpn_config      -- read the current config to understand rules
+  4. vpn_route_test  -- predict if a domain goes direct or proxy
+  5. vpn_config_write -- modify config (with validation, does NOT restart)
+  6. vpn_apply       -- write config + restart + verify (one-shot)
+  7. vpn_restart     -- just restart without config change (e.g. after network wedge)
+
+TYPICAL WORKFLOW:
+  # Agent wants to add "example.com" to the proxy list:
+  1. cfg = vpn_config()                          # read current config
+  2. vpn_route_test(domain="example.com")        # confirm it currently goes direct
+  3. Modify the config dict: add "example.com" to the proxy domain_suffix list
+  4. vpn_apply(config_json=json.dumps(cfg))      # write + restart + verify
+  5. vpn_route_test(domain="example.com")        # confirm it now goes to sg-auto
+
+  # Agent suspects network is broken:
+  1. vpn_status()                                # is the service running?
+  2. vpn_logs(level="ERROR", lines=20)           # what errors are happening?
+  3. vpn_restart()                               # try restarting
+  4. vpn_status()                                # verify recovery
+
+DESIGN PRINCIPLE:
+  Agent manages the network entirely through these tools, never touching the
+  filesystem or running shell commands directly. Every write is validated and
+  backed up. Every restart is self-verifying.
 """
 import json
 import os
 import pathlib
-import re
 import socket
 import subprocess
 import sys
@@ -30,8 +59,8 @@ for _p in pathlib.Path(__file__).resolve().parents:
         break
 import huamcp  # noqa: E402
 
-SERVICE = "singbox"
-CLASH_API = "http://127.0.0.1:9090"
+SERVICE = "singbox"                       # Windows service name (sc stop/start)
+CLASH_API = "http://127.0.0.1:9090"       # sing-box Clash-compatible control API
 CACHE_DB = os.path.expanduser("~\\sing-box\\cache.db")
 LOG_FILE = os.path.expanduser("~\\sing-box\\sing-box.log")
 CONFIG_FILE = os.path.expanduser("~\\sing-box\\config.json")
@@ -39,9 +68,10 @@ CONFIG_FILE = os.path.expanduser("~\\sing-box\\config.json")
 mcp = huamcp.server(__file__)
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# -- helpers ------------------------------------------------------------------
 
 def _service_state() -> str:
+    """Query Windows service state via 'sc query'. Returns 'running'/'stopped'/'unknown'."""
     try:
         r = subprocess.run(
             ["sc", "query", SERVICE], capture_output=True, text=True, timeout=10
@@ -56,6 +86,7 @@ def _service_state() -> str:
 
 
 def _clash_get(path: str, timeout: float = 4) -> Optional[dict]:
+    """GET from Clash API (127.0.0.1:9090). Returns parsed JSON or None on failure."""
     try:
         r = requests.get(f"{CLASH_API}{path}", timeout=timeout)
         if r.status_code == 200:
@@ -66,6 +97,7 @@ def _clash_get(path: str, timeout: float = 4) -> Optional[dict]:
 
 
 def _load_config() -> Optional[dict]:
+    """Load and parse config.json. Returns dict or None on error."""
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -84,7 +116,7 @@ def _domain_matches(domain: str, suffixes: List[str]) -> bool:
 
 
 def _ip_in_cidr(ip: str, cidrs: List[str]) -> bool:
-    """Check if an IP is within any CIDR range (simple prefix match)."""
+    """Check if an IP is within any CIDR range."""
     import ipaddress
     try:
         addr = ipaddress.ip_address(ip)
@@ -100,10 +132,14 @@ def _ip_in_cidr(ip: str, cidrs: List[str]) -> bool:
 
 
 def _simulate_route(config: dict, domain: str = "", ip: str = "") -> Dict[str, Any]:
-    """Simulate sing-box route rule matching. Returns the predicted outbound."""
+    """Simulate sing-box sequential rule matching. Returns predicted outbound + matched rule.
+
+    Note: process_name rules cannot be simulated (need running process context).
+    rule_set rules (geosite-cn) are skipped (need the binary rule file).
+    These will fall through to the 'final' outbound.
+    """
     rules = config.get("route", {}).get("rules", [])
 
-    # Resolve domain to IP if only domain provided
     resolved_ip = ip
     if domain and not ip:
         try:
@@ -116,7 +152,6 @@ def _simulate_route(config: dict, domain: str = "", ip: str = "") -> Dict[str, A
         if not outbound:
             continue  # system rules (sniff, hijack-dns, reject)
 
-        # ip_is_private
         if rule.get("ip_is_private") and resolved_ip:
             import ipaddress
             try:
@@ -125,37 +160,43 @@ def _simulate_route(config: dict, domain: str = "", ip: str = "") -> Dict[str, A
             except ValueError:
                 pass
 
-        # process_name (can't simulate from domain/IP alone)
         if rule.get("process_name"):
-            continue
+            continue  # can't simulate
 
-        # domain_suffix
         if rule.get("domain_suffix") and domain:
             if _domain_matches(domain, rule["domain_suffix"]):
                 return {"outbound": outbound, "rule": f"domain_suffix ({len(rule['domain_suffix'])} entries)", "matched": True}
 
-        # ip_cidr
         if rule.get("ip_cidr") and resolved_ip:
             if _ip_in_cidr(resolved_ip, rule["ip_cidr"]):
                 return {"outbound": outbound, "rule": f"ip_cidr ({len(rule['ip_cidr'])} ranges)", "matched": True}
 
-        # rule_set (geosite-cn etc.) — can't simulate locally, skip
         if rule.get("rule_set"):
-            continue
+            continue  # can't simulate locally
 
-    # final
     final = config.get("route", {}).get("final", "sg-auto")
     return {"outbound": final, "rule": "final (default)", "matched": True}
 
 
-# ── tools ────────────────────────────────────────────────────────────────────
+# -- tools --------------------------------------------------------------------
 
 @mcp.tool()
 def vpn_restart() -> Dict[str, Any]:
     """Atomically restart sing-box and verify it's alive.
 
-    Steps: stop service → wait for TUN release → clear poisoned cache.db →
-    start → poll Clash API. Call after config changes or when network is wedged.
+    Steps: stop service -> wait 3s for TUN release -> delete poisoned cache.db ->
+    start service -> poll Clash API up to 5 times.
+
+    When to call:
+      - After editing config.json manually (not via vpn_config_write)
+      - When the network is wedged (no connectivity, API unreachable)
+      - As a last resort before investigating deeper
+
+    Returns:
+      ok (bool): True if Clash API answered within 15s.
+      sc_start_ok (bool): Whether sc start returned success.
+      steps (list[str]): Human-readable log of what happened.
+      hint (str|None): Error guidance if ok=False.
     """
     steps: List[str] = []
 
@@ -202,15 +243,39 @@ def vpn_restart() -> Dict[str, Any]:
         "sc_start_ok": start_ok,
         "steps": steps,
         "hint": None if verified else (
-            f"启动失败。单独跑 'sc start {SERVICE}' 看错误，"
-            "或直接 sing-box.exe run -c config.json 看报错。"
+            f"Restart failed. Try manually: sc stop {SERVICE} && sc start {SERVICE}. "
+            "If still broken, check vpn_logs(level='ERROR') for root cause."
         ),
     }
 
 
 @mcp.tool()
 def vpn_status() -> Dict[str, Any]:
-    """Query current proxy status: service state, proxy groups, selected nodes."""
+    """Query current VPN/proxy status: service state, proxy groups, selected nodes.
+
+    When to call:
+      - Before making changes (know the current state)
+      - After vpn_restart or vpn_apply (verify recovery)
+      - When diagnosing "which server am I going through?"
+
+    Returns:
+      service (str): "running", "stopped", or "unknown".
+      api_reachable (bool): Whether Clash API (127.0.0.1:9090) responded.
+      version (str|null): sing-box version string.
+      groups (dict): Proxy groups, each with:
+        - type: "Selector" (manual pick) or "URLTest" (auto-pick by latency)
+        - selected (str): Currently active outbound name (e.g. "hy2-sg")
+        - options (list[str]): Available outbound names in this group
+
+    Example return:
+      {
+        "service": "running",
+        "groups": {
+          "sg-auto": {"type": "URLTest", "selected": "hy2-sg", "options": ["hy2-sg", "ss-sg"]},
+          "agent-group": {"type": "Selector", "selected": "agent-sg", "options": ["agent-sg", "agent-us"]}
+        }
+      }
+    """
     state = _service_state()
     groups: Dict[str, Any] = {}
 
@@ -238,9 +303,26 @@ def vpn_status() -> Dict[str, Any]:
 def vpn_logs(lines: int = 30, level: Optional[str] = None) -> Dict[str, Any]:
     """Read recent sing-box log lines.
 
+    When to call:
+      - Diagnosing why the network is slow or broken
+      - Checking if a config change caused errors
+      - Looking for specific failures (TIME_WAIT spikes, connection resets)
+
     Args:
-        lines: Number of tail lines (default 30, max 200).
-        level: Filter by level, e.g. "ERROR", "WARN". None = all.
+      lines: Number of tail lines to return (default 30, max 200).
+      level: Filter by level, e.g. "ERROR", "WARN". None = all levels.
+
+    Returns:
+      ok (bool): Whether log file was readable.
+      total_in_file (int): Total lines in log file.
+      returned (int): Number of lines in this response.
+      lines (list[str]): The log lines, newest last.
+
+    Log format: "+0800 YYYY-MM-DD HH:MM:SS LEVEL [id duration] module: message"
+    Common errors:
+      - "connection upload closed" + "forcibly closed by remote host" = server dropped connection
+      - "i/o timeout" on direct = domestic service unreachable
+      - "dial tcp ... actively refused it" = remote port not listening
     """
     lines = min(max(lines, 1), 200)
 
@@ -270,14 +352,35 @@ def vpn_logs(lines: int = 30, level: Optional[str] = None) -> Dict[str, Any]:
 def vpn_config() -> Dict[str, Any]:
     """Read the current sing-box config.json.
 
-    Returns the full parsed config. Use this to understand current routing rules,
-    outbounds, DNS settings before making changes.
+    When to call:
+      - Before vpn_config_write or vpn_apply (know what you're changing)
+      - To audit current routing rules
+      - To check which domains go direct vs proxy
+
+    Returns:
+      ok (bool): Whether config was readable.
+      path (str): Absolute path to config.json.
+      summary (dict): Quick overview:
+        - route_rules (int): Number of route rules
+        - outbounds (list[str]): All outbound tags
+        - dns_servers (list[tuple]): [(tag, server_address), ...]
+        - final_outbound (str): Default outbound for unmatched traffic
+      config (dict): The full parsed config.json.
+
+    Config structure (sing-box format):
+      - dns.servers: DNS resolvers (dns-remote via proxy, dns-direct for CN)
+      - inbounds: TUN adapter (172.19.0.1) + mixed proxy (0.0.0.0:7890)
+      - outbounds: Protocol nodes (hy2-sg, ss-sg, agent-sg, agent-us) + groups
+      - route.rules: Ordered rules (match first wins). Key types:
+        - process_name: Match by process (LOL=direct, claude=agent-group)
+        - domain_suffix: Match by domain (google.com=proxy, microsoft.com=direct)
+        - ip_cidr: Match by IP range (Google IPs=proxy, CN ISP IPs=direct)
+        - final: Default (sg-auto = proxy via Singapore)
     """
     config = _load_config()
     if config is None:
         return {"ok": False, "error": f"Cannot read config: {CONFIG_FILE}"}
 
-    # Extract summary for quick overview
     route_rules = config.get("route", {}).get("rules", [])
     outbounds = [o.get("tag", "?") for o in config.get("outbounds", [])]
     dns_servers = [(d.get("tag"), d.get("server")) for d in config.get("dns", {}).get("servers", [])]
@@ -299,20 +402,31 @@ def vpn_config() -> Dict[str, Any]:
 def vpn_config_write(config_json: str, validate_only: bool = False) -> Dict[str, Any]:
     """Write a new sing-box config.json with validation.
 
-    Args:
-        config_json: The full config as a JSON string.
-        validate_only: If true, only validate without writing (dry run).
+    When to call:
+      - After reading config with vpn_config and modifying it
+      - Use validate_only=True first to check before writing
+      - Does NOT restart -- call vpn_restart or vpn_apply for that
 
-    Returns validation result and, if not dry-run, writes the file.
-    Does NOT restart — call vpn_restart or vpn_apply for that.
+    Args:
+      config_json: The full config as a JSON string (use json.dumps on modified dict).
+      validate_only: If true, only validate without writing (dry run).
+
+    Validation checks:
+      - Valid JSON (parseable)
+      - Has required sections: route, outbounds, dns
+      - route.final references a valid outbound tag
+
+    Returns:
+      ok (bool): Whether validation passed (and write succeeded if not dry run).
+      written (str): Path to config.json (if written).
+      backup (str): Path to config.json.bak (if backup was created).
+      errors (list[str]): Validation failures (if any).
     """
-    # Parse and validate
     try:
         config = json.loads(config_json)
     except json.JSONDecodeError as e:
         return {"ok": False, "error": f"Invalid JSON: {e}"}
 
-    # Basic structural validation
     errors = []
     if "route" not in config:
         errors.append("missing 'route' section")
@@ -327,9 +441,8 @@ def vpn_config_write(config_json: str, validate_only: bool = False) -> Dict[str,
         return {"ok": False, "errors": errors}
 
     if validate_only:
-        return {"ok": True, "valid": True, "note": "dry run — nothing written"}
+        return {"ok": True, "valid": True, "note": "dry run -- nothing written"}
 
-    # Backup current config
     backup = CONFIG_FILE + ".bak"
     try:
         if os.path.exists(CONFIG_FILE):
@@ -338,9 +451,8 @@ def vpn_config_write(config_json: str, validate_only: bool = False) -> Dict[str,
             with open(backup, "w", encoding="utf-8") as f:
                 f.write(old)
     except OSError:
-        pass  # best-effort backup
+        pass
 
-    # Write new config
     try:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
@@ -354,18 +466,26 @@ def vpn_config_write(config_json: str, validate_only: bool = False) -> Dict[str,
 def vpn_apply(config_json: str) -> Dict[str, Any]:
     """Atomically write config + restart + verify. The one-shot "make it so" tool.
 
-    Args:
-        config_json: The full config as a JSON string.
+    When to call:
+      - When you want to change config AND have it take effect immediately
+      - This is the preferred way to apply config changes
 
-    Steps: validate → write config → restart service → verify API.
-    Returns combined result of write + restart.
+    Args:
+      config_json: The full config as a JSON string.
+
+    Steps: validate -> write config.json -> restart sing-box -> poll API -> verify.
+    If write fails, restart is skipped. If restart fails, config is already written
+    (use vpn_restart to retry).
+
+    Returns:
+      ok (bool): True if both write and restart succeeded.
+      write (dict): Result from vpn_config_write.
+      restart (dict): Result from vpn_restart.
     """
-    # Step 1: validate + write
     write_result = vpn_config_write(config_json, validate_only=False)
     if not write_result.get("ok"):
         return {"ok": False, "phase": "write", **write_result}
 
-    # Step 2: restart + verify
     restart_result = vpn_restart()
 
     return {
@@ -380,13 +500,28 @@ def vpn_apply(config_json: str) -> Dict[str, Any]:
 def vpn_route_test(domain: str = "", ip: str = "") -> Dict[str, Any]:
     """Predict which outbound a domain or IP would use based on current config rules.
 
-    Args:
-        domain: Domain to test (e.g. "google.com", "live.com").
-        ip: IP address to test (e.g. "8.8.8.8"). If only domain is given,
-            it will be resolved to an IP via DNS.
+    When to call:
+      - Before adding/removing a domain from routing rules
+      - To verify a config change had the intended effect
+      - To diagnose "why is this site slow?" (check if it goes proxy or direct)
 
-    Simulates sing-box's sequential rule matching. Returns the predicted
-    outbound and which rule matched. Useful for "would this go direct or proxy?"
+    Args:
+      domain: Domain to test (e.g. "google.com", "live.com", "example.com").
+      ip: IP address to test (e.g. "8.8.8.8", "20.190.148.166").
+          If only domain is given, it will be resolved to an IP.
+
+    Returns:
+      ok (bool): Whether the test ran.
+      domain (str): The domain tested.
+      ip (str): The IP tested (or "(resolved)" if auto-resolved).
+      outbound (str): Predicted outbound tag (e.g. "sg-auto", "direct", "agent-group").
+      rule (str): Which rule matched (e.g. "domain_suffix (24 entries)", "ip_is_private").
+      matched (bool): Always True (falls through to 'final' if no specific rule matches).
+
+    Limitations:
+      - process_name rules are skipped (need running process context)
+      - rule_set rules (geosite-cn) are skipped (need binary file)
+      - These fall through to the 'final' outbound (usually sg-auto = proxy)
     """
     if not domain and not ip:
         return {"ok": False, "error": "Provide at least one of domain or ip"}
