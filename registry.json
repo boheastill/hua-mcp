@@ -1,0 +1,64 @@
+{
+  "$comment": "Single source of truth for the hua-mcp fleet. Ports/env/transport live HERE; servers read it via shared/fleet.py, and PM2 + agent MCP configs should be derived from it, never hand-synced. Port plan: 8001-8009 = per-environment multi-tool servers; 8010+ = heavy / single-purpose / publicly-exposed servers (own process, own blast radius). Add a tool = drop a tools/<name>.py with register(mcp); add a server = add an entry here.",
+  "servers": [
+    {
+      "name": "win-agents",
+      "env": "win",
+      "port": 8001,
+      "transport": "streamable-http",
+      "entry": "win_agents/win_mcp_server.py",
+      "launch_win": "win_agents/run.ps1",
+      "health": "/health",
+      "public": false,
+      "heavy": false,
+      "host_os": "windows",
+      "tools": ["singbox"],
+      "desc": "Windows-only APIs + things that must run on the Windows host (clipboard, GUI, services, sing-box/Clash proxy control)."
+    },
+    {
+      "name": "wsl-agents",
+      "env": "wsl",
+      "port": 8002,
+      "transport": "streamable-http",
+      "entry": "wsl_agents/wsl_mcp_server.py",
+      "launch": "wsl_agents/run.sh",
+      "health": "/health",
+      "public": false,
+      "heavy": false,
+      "host_os": "wsl",
+      "tools": ["identity_checker", "session_ref"],
+      "desc": "Linux-native tools: model identity checks, Claude Code session recovery (reff), bash/docker."
+    },
+    {
+      "name": "cloud-api",
+      "env": "cloud",
+      "port": 8003,
+      "transport": "streamable-http",
+      "entry": "cloud_api_agents/api_mcp_server.py",
+      "launch": "cloud_api_agents/run.sh",
+      "health": "/health",
+      "public": false,
+      "heavy": false,
+      "host_os": "wsl",
+      "tools": [],
+      "desc": "Pure network calls (AWS/Jira/RSS) — no local env deps; hosted on WSL for now."
+    },
+    {
+      "name": "md2pdf",
+      "env": "wsl",
+      "port": 8010,
+      "transport": "streamable-http",
+      "entry": "servers/md2pdf/server.py",
+      "launch": "servers/md2pdf/run.sh",
+      "health": "/health",
+      "rest": ["POST /pdf"],
+      "public": true,
+      "heavy": true,
+      "host_os": "wsl",
+      "needs": ["nix", "chromium", "node-mermaid-cli", "noto-cjk-fonts"],
+      "auth_env": "MD2PDF_TOKEN",
+      "tools": ["md_to_pdf"],
+      "desc": "Markdown -> premium PDF (offline, mermaid-capable). Own process: Chromium is heavy and can hang. Same process also serves REST /pdf for the future public website endpoint."
+    }
+  ]
+}

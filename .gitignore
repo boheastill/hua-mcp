@@ -1,0 +1,17 @@
+# Python
+**/.venv/
+**/__pycache__/
+*.pyc
+
+# Node
+**/node_modules/
+**/package-lock.json
+
+# Nix build outputs (flake.lock IS committed for reproducibility)
+result
+**/.direnv/
+
+# Generated / runtime
+fleet-mcp.json
+*.log
+.claude/settings.local.json
