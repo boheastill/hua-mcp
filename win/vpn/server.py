@@ -1,101 +1,24 @@
-"""vpn MCP -- manage the network proxy (sing-box) for the agent.
+"""vpn MCP -- manage the sing-box network proxy on Windows.
 
-CRITICAL CONTEXT (read this first, every time):
-  You are a domestic Chinese AI model. You do NOT need the proxy to function.
-  When the proxy is down, you are STILL fully operational -- only the user's
-  access to foreign websites is broken. The user may be panicking (e.g. mid
-  video call). Your job: fix the network silently and report when done.
-  The user does NOT need to do anything unless you explicitly ask them to.
+Service: "singbox" (Windows service). Config: ~\\sing-box\\config.json.
+Clash API: 127.0.0.1:9090. Architecture docs: D:\\vpn-configs\\architecture.md
 
-WHAT THIS MCP DOES:
-  Provides tools to diagnose, restart, reconfigure, and switch nodes for the
-  Windows network proxy (sing-box). You manage the network through these tools.
-  You do NOT need to touch the filesystem or run shell commands -- but you CAN
-  if the tools are not enough (e.g. SSH to check server status).
-
-WHAT IS SING-BOX:
-  sing-box is a universal proxy platform running as a Windows service ("singbox").
-  It intercepts all traffic via a TUN adapter (172.19.0.1) and routes it based on
-  rules: direct for domestic/whitelisted sites, proxy (via Singapore VPS) for
-  everything else. The Clash-compatible API at 127.0.0.1:9090 exposes status.
-
-CONFIG FILE:
-  C:\\Users\\bohea\\sing-box\\config.json -- the sing-box routing/outbound/DNS config.
-  Architecture documentation: D:\\vpn-configs\\architecture.md
-
-SERVERS:
-  - SG (47.130.65.208): Primary. Hysteria2 (UDP 443) + SS2022 (TCP 8443).
-  - US (66.154.101.110): Backup. SS2022 (TCP 8443). Sometimes goes down.
-  - Azure (52.146.92.1): Emergency. WireGuard (UDP 51820). Last resort.
+Servers:
+  SG 47.130.65.208 (admin) -- Hy2 UDP 443 + SS2022 TCP 8443
+  US 66.154.101.110 (root) -- SS2022 TCP 8443
+  Azure 52.146.92.1 (bohea) -- WireGuard UDP 51820
   SSH: ssh -i D:/ssh-keys/lbqg.pem <user>@<ip>
-  (SG: user=admin, US: user=root, Azure: user=bohea)
 
-PROXY GROUPS:
-  - sg-auto (URLTest): Auto-selects between hy2-sg and ss-sg by latency.
-  - agent-group (Selector): For AI agents. Defaults to agent-sg. Can switch to agent-us.
+Groups: sg-auto (URLTest: hy2-sg/ss-sg), agent-group (Selector: agent-sg/agent-us)
 
-TOOLS:
-  1. vpn_status            -- see current state (which node, service running?)
-  2. vpn_connectivity_test -- actually test internet (not just API)
-  3. vpn_restart           -- atomic restart + verify
-  4. vpn_switch_node       -- quick-switch to a different outbound node
-  5. vpn_logs              -- read recent error logs
-  6. vpn_config            -- read current config
-  7. vpn_route_test        -- predict if a domain goes direct or proxy
-  8. vpn_config_write      -- write config (with validation, does NOT restart)
-  9. vpn_apply             -- write config + restart (one-shot)
-
-EMERGENCY PROCEDURE (user says network is down):
-  Step 1: vpn_connectivity_test()
-    - api_ok + proxy_ok + direct_ok  => all good, maybe browser issue
-    - api_ok + !proxy_ok + direct_ok => proxy node dead, go to Step 2
-    - api_ok + !proxy_ok + !direct_ok => TUN broken, go to Step 2
-    - !api_ok + !proxy_ok + direct_ok => sing-box crashed, go to Step 2
-
-  Step 2: vpn_restart()
-    - ok=True  => done, tell user "fixed, reconnect your call"
-    - ok=False => go to Step 3
-
-  Step 3: vpn_connectivity_test() again
-    - proxy_ok=True => fixed
-    - proxy_ok=False => go to Step 4
-
-  Step 4: vpn_switch_node(target="ss-sg")  (force TCP instead of UDP)
-    - Then vpn_connectivity_test()
-    - proxy_ok=True => done
-    - proxy_ok=False => vpn_switch_node(target="agent-us")  (try US)
-    - proxy_ok=True => done
-    - proxy_ok=False => go to Step 5
-
-  Step 5: SSH to check servers
-    - ssh admin@47.130.65.208 and check: ss -tlnp | grep -E '443|8443'
-    - If server is down, restart the service on the server
-    - If server is up but unreachable from China, go to Step 6
-
-  Step 6: Last resort -- tell user
-    "All proxy servers are unreachable. You need to act:
-     Option A: Open D:\\ssh-keys\\azure-au-wg.conf in WireGuard, connect
-     Option B: Use phone hotspot as temporary internet
-     Option C: sc stop singbox && connect OpenVPN (D:\\vpn-configs\\us-openvpn-tcp.ovpn)"
-
-  RULES:
-    - NEVER retry the same broken node more than twice. Escalate.
-    - You have ~3 minutes before the user's video call fully drops.
-    - Be concise. "Fixed" is better than "I restarted the service successfully."
-    - If you need the user to do something, give ONE clear instruction.
-
-TYPICAL WORKFLOW -- add a domain to proxy:
-  1. cfg = vpn_config()
-  2. vpn_route_test(domain="example.com")          # confirm it currently goes direct
-  3. Add "example.com" to cfg["route"]["rules"][...]["domain_suffix"]
-  4. vpn_apply(config_json=json.dumps(cfg))         # write + restart + verify
-  5. vpn_route_test(domain="example.com")           # confirm it now goes to sg-auto
-
-DESIGN PRINCIPLE:
-  Agent manages the network entirely through these tools, never touching the
-  filesystem or running shell commands directly. Every write is validated and
-  backed up. Every restart is self-verifying. The agent is ALWAYS available
-  (domestic model, no proxy needed) and should fix things silently.
+Emergency (user says network down):
+  1. vpn_connectivity_test() -- what's broken
+  2. vpn_restart() -- fix. ok=True? done.
+  3. vpn_switch_node(target="ss-sg") -- SG UDP dead, try TCP
+  4. vpn_switch_node(target="agent-us") -- try US
+  5. SSH to server, check if service running
+  6. Last resort: tell user to activate WireGuard or OpenVPN
+  Rule: never retry same node more than twice.
 """
 import json
 import os
@@ -235,23 +158,10 @@ def _simulate_route(config: dict, domain: str = "", ip: str = "") -> Dict[str, A
 
 @mcp.tool()
 def vpn_restart() -> Dict[str, Any]:
-    """Atomically restart sing-box and verify it's alive.
+    """Restart sing-box service and verify it's alive.
 
-    Steps: stop service -> wait 3s for TUN release -> delete poisoned cache.db ->
-    start service -> poll Clash API up to 5 times.
-
-    When to call:
-      - After editing config.json manually
-      - When the network is wedged (no connectivity, API unreachable)
-      - First attempt when network goes down
-
-    Returns:
-      ok (bool): True if Clash API answered within 15s.
-      sc_start_ok (bool): Whether sc start returned success.
-      steps (list[str]): Human-readable log of what happened.
-      hint (str|None): Error guidance if ok=False.
-
-    If ok=False twice in a row, DO NOT retry -- switch nodes instead.
+    Returns: ok (bool), steps (list), hint (str if failed).
+    If ok=False twice, switch nodes instead of retrying.
     """
     steps: List[str] = []
 
@@ -307,30 +217,9 @@ def vpn_restart() -> Dict[str, Any]:
 
 @mcp.tool()
 def vpn_status() -> Dict[str, Any]:
-    """Query current VPN/proxy status: service state, proxy groups, selected nodes.
+    """Query service state and proxy group selections.
 
-    When to call:
-      - Before making changes (know the current state)
-      - After vpn_restart or vpn_apply (verify recovery)
-      - When diagnosing "which server am I going through?"
-
-    Returns:
-      service (str): "running", "stopped", or "unknown".
-      api_reachable (bool): Whether Clash API (127.0.0.1:9090) responded.
-      version (str|null): sing-box version string.
-      groups (dict): Proxy groups, each with:
-        - type: "Selector" (manual pick) or "URLTest" (auto-pick by latency)
-        - selected (str): Currently active outbound name (e.g. "hy2-sg")
-        - options (list[str]): Available outbound names in this group
-
-    Example return:
-      {
-        "service": "running",
-        "groups": {
-          "sg-auto": {"type": "URLTest", "selected": "hy2-sg", "options": ["hy2-sg", "ss-sg"]},
-          "agent-group": {"type": "Selector", "selected": "agent-sg", "options": ["agent-sg", "agent-us"]}
-        }
-      }
+    Returns: service ("running"/"stopped"), groups dict with selected node per group.
     """
     state = _service_state()
     groups: Dict[str, Any] = {}
@@ -357,30 +246,10 @@ def vpn_status() -> Dict[str, Any]:
 
 @mcp.tool()
 def vpn_connectivity_test() -> Dict[str, Any]:
-    """Test actual internet connectivity through the proxy. Not just API -- real traffic.
+    """Test API, proxy (google.com), and direct (baidu.com) connectivity.
 
-    When to call:
-      - FIRST thing when network goes down (before restarting)
-      - After vpn_restart to confirm recovery
-      - To distinguish "proxy node down" from "TUN adapter broken" from "DNS broken"
-
-    Tests performed:
-      1. Clash API reachable (local control plane)
-      2. Google via proxy (confirms proxy path works end-to-end)
-      3. Baidu direct (confirms direct path works, TUN is functional)
-
-    Returns:
-      api_ok (bool): Clash API responded.
-      proxy_ok (bool): Could reach google.com through proxy (status 200).
-      direct_ok (bool): Could reach baidu.com directly (status 200).
-      diagnosis (str): Plain-language diagnosis of what's broken.
-
-    Interpretation:
-      - api_ok=True, proxy_ok=True, direct_ok=True  => Network is fine
-      - api_ok=True, proxy_ok=False, direct_ok=True => Proxy node dead, need to switch
-      - api_ok=True, proxy_ok=False, direct_ok=False => TUN adapter broken, need restart
-      - api_ok=False, proxy_ok=False, direct_ok=True => sing-box service crashed
-      - api_ok=False, proxy_ok=False, direct_ok=False => System network issue, not sing-box
+    Returns: api_ok, proxy_ok, direct_ok (bool each), diagnosis (str).
+    Call this FIRST when network goes down.
     """
     results = {}
 
@@ -429,27 +298,8 @@ def vpn_connectivity_test() -> Dict[str, Any]:
 def vpn_logs(lines: int = 30, level: Optional[str] = None) -> Dict[str, Any]:
     """Read recent sing-box log lines.
 
-    When to call:
-      - Diagnosing why the network is slow or broken
-      - Checking if a config change caused errors
-      - Looking for specific failures (TIME_WAIT spikes, connection resets)
-
-    Args:
-      lines: Number of tail lines to return (default 30, max 200).
-      level: Filter by level, e.g. "ERROR", "WARN". None = all levels.
-
-    Returns:
-      ok (bool): Whether log file was readable.
-      total_in_file (int): Total lines in log file.
-      returned (int): Number of lines in this response.
-      lines (list[str]): The log lines, newest last.
-
-    Log format: "+0800 YYYY-MM-DD HH:MM:SS LEVEL [id duration] module: message"
-    Common errors:
-      - "connection upload closed" + "forcibly closed by remote host" = server dropped connection
-      - "i/o timeout" on direct = domestic service unreachable
-      - "dial tcp ... actively refused it" = remote port not listening (node down)
-      - "connection download closed" = proxy node stopped responding
+    Args: lines (1-200, default 30), level filter ("ERROR", "WARN", etc).
+    Returns: ok, total_in_file, returned, lines (list[str]).
     """
     lines = min(max(lines, 1), 200)
 
@@ -477,32 +327,9 @@ def vpn_logs(lines: int = 30, level: Optional[str] = None) -> Dict[str, Any]:
 
 @mcp.tool()
 def vpn_config() -> Dict[str, Any]:
-    """Read the current sing-box config.json.
+    """Read current sing-box config.json.
 
-    When to call:
-      - Before vpn_config_write or vpn_apply (know what you're changing)
-      - To audit current routing rules
-      - To check which domains go direct vs proxy
-
-    Returns:
-      ok (bool): Whether config was readable.
-      path (str): Absolute path to config.json.
-      summary (dict): Quick overview:
-        - route_rules (int): Number of route rules
-        - outbounds (list[str]): All outbound tags
-        - dns_servers (list[tuple]): [(tag, server_address), ...]
-        - final_outbound (str): Default outbound for unmatched traffic
-      config (dict): The full parsed config.json.
-
-    Config structure (sing-box format):
-      - dns.servers: DNS resolvers (dns-remote via proxy, dns-direct for CN)
-      - inbounds: TUN adapter (172.19.0.1) + mixed proxy (0.0.0.0:7890)
-      - outbounds: Protocol nodes (hy2-sg, ss-sg, agent-sg, agent-us) + groups
-      - route.rules: Ordered rules (match first wins). Key types:
-        - process_name: Match by process (LOL=direct, claude=agent-group)
-        - domain_suffix: Match by domain (google.com=proxy, microsoft.com=direct)
-        - ip_cidr: Match by IP range (Google IPs=proxy, CN ISP IPs=direct)
-        - final: Default (sg-auto = proxy via Singapore)
+    Returns: ok, path, summary (route_rules count, outbounds list, dns_servers, final_outbound), config (full dict).
     """
     config = _load_config()
     if config is None:
@@ -527,27 +354,10 @@ def vpn_config() -> Dict[str, Any]:
 
 @mcp.tool()
 def vpn_config_write(config_json: str, validate_only: bool = False) -> Dict[str, Any]:
-    """Write a new sing-box config.json with validation.
+    """Write config.json with JSON + structural validation. Does NOT restart.
 
-    When to call:
-      - After reading config with vpn_config and modifying it
-      - Use validate_only=True first to check before writing
-      - Does NOT restart -- call vpn_restart or vpn_apply for that
-
-    Args:
-      config_json: The full config as a JSON string (use json.dumps on modified dict).
-      validate_only: If true, only validate without writing (dry run).
-
-    Validation checks:
-      - Valid JSON (parseable)
-      - Has required sections: route, outbounds, dns
-      - route.final references a valid outbound tag
-
-    Returns:
-      ok (bool): Whether validation passed (and write succeeded if not dry run).
-      written (str): Path to config.json (if written).
-      backup (str): Path to config.json.bak (if backup was created).
-      errors (list[str]): Validation failures (if any).
+    Args: config_json (full config string), validate_only (dry run if true).
+    Returns: ok, written path, backup path, or errors list.
     """
     try:
         config = json.loads(config_json)
@@ -591,23 +401,10 @@ def vpn_config_write(config_json: str, validate_only: bool = False) -> Dict[str,
 
 @mcp.tool()
 def vpn_apply(config_json: str) -> Dict[str, Any]:
-    """Atomically write config + restart + verify. The one-shot "make it so" tool.
+    """Write config + restart + verify. One-shot.
 
-    When to call:
-      - When you want to change config AND have it take effect immediately
-      - This is the preferred way to apply config changes
-
-    Args:
-      config_json: The full config as a JSON string.
-
-    Steps: validate -> write config.json -> restart sing-box -> poll API -> verify.
-    If write fails, restart is skipped. If restart fails, config is already written
-    (use vpn_restart to retry).
-
-    Returns:
-      ok (bool): True if both write and restart succeeded.
-      write (dict): Result from vpn_config_write.
-      restart (dict): Result from vpn_restart.
+    Args: config_json (full config string).
+    Returns: ok, write result, restart result.
     """
     write_result = vpn_config_write(config_json, validate_only=False)
     if not write_result.get("ok"):
@@ -625,31 +422,10 @@ def vpn_apply(config_json: str) -> Dict[str, Any]:
 
 @mcp.tool()
 def vpn_switch_node(target: str = "sg-auto") -> Dict[str, Any]:
-    """Quick-switch a proxy group to a different outbound node (no config change needed).
+    """Switch proxy group to a different outbound via Clash API. Temporary (lost on restart).
 
-    When to call:
-      - Current node is dead but sing-box is running (vpn_connectivity_test shows
-        proxy_ok=False but api_ok=True)
-      - Want to force traffic through a specific server
-      - Emergency fallback during video call outage
-
-    Args:
-      target: The outbound or group to switch to. Options:
-        - "sg-auto" (default): Auto-select between hy2-sg and ss-sg
-        - "ss-sg": Force Singapore SS2022 (TCP, more stable than Hy2)
-        - "hy2-sg": Force Singapore Hysteria2 (UDP, faster when stable)
-        - "agent-us": Route through US server (66.154.101.110)
-        - "agent-sg": Route through Singapore with h2mux (for agent traffic)
-
-    How it works: Calls the Clash API to switch the selector group's active node.
-    This is TEMPORARY -- it does not modify config.json. Changes are lost on restart.
-
-    Returns:
-      ok (bool): Whether the switch was acknowledged by the API.
-      target (str): The node switched to.
-      note (str): Reminder that this is temporary.
-
-    For permanent changes, use vpn_apply to modify config.json instead.
+    Args: target -- "ss-sg", "hy2-sg", "sg-auto", "agent-us", "agent-sg".
+    Returns: ok, target, group, note.
     """
     # Map friendly names to their group and target
     node_map = {
@@ -690,30 +466,10 @@ def vpn_switch_node(target: str = "sg-auto") -> Dict[str, Any]:
 
 @mcp.tool()
 def vpn_route_test(domain: str = "", ip: str = "") -> Dict[str, Any]:
-    """Predict which outbound a domain or IP would use based on current config rules.
+    """Predict which outbound a domain/IP would use (simulates rule matching).
 
-    When to call:
-      - Before adding/removing a domain from routing rules
-      - To verify a config change had the intended effect
-      - To diagnose "why is this site slow?" (check if it goes proxy or direct)
-
-    Args:
-      domain: Domain to test (e.g. "google.com", "live.com", "example.com").
-      ip: IP address to test (e.g. "8.8.8.8", "20.190.148.166").
-          If only domain is given, it will be resolved to an IP.
-
-    Returns:
-      ok (bool): Whether the test ran.
-      domain (str): The domain tested.
-      ip (str): The IP tested (or "(resolved)" if auto-resolved).
-      outbound (str): Predicted outbound tag (e.g. "sg-auto", "direct", "agent-group").
-      rule (str): Which rule matched (e.g. "domain_suffix (24 entries)", "ip_is_private").
-      matched (bool): Always True (falls through to 'final' if no specific rule matches).
-
-    Limitations:
-      - process_name rules are skipped (need running process context)
-      - rule_set rules (geosite-cn) are skipped (need binary file)
-      - These fall through to the 'final' outbound (usually sg-auto = proxy)
+    Args: domain (e.g. "google.com") and/or ip (e.g. "8.8.8.8").
+    Returns: ok, domain, ip, outbound, rule, matched.
     """
     if not domain and not ip:
         return {"ok": False, "error": "Provide at least one of domain or ip"}
