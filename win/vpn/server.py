@@ -1,19 +1,11 @@
 """vpn MCP -- manage the sing-box network proxy on Windows.
 
 Service: "singbox" (Windows service). Config: ~\\sing-box\\config.json.
-Clash API: 127.0.0.1:9090. Architecture docs: D:\\vpn-configs\\architecture.md
+Clash API: 127.0.0.1:9090. Logs: ~\\sing-box\\sing-box.log.
 
-Servers:
-  SG 47.130.65.208 (admin) -- Hy2 UDP 443 + SS2022 TCP 8443
-  US 66.154.101.110 (root) -- SS2022 TCP 8443
-  Azure 52.146.92.1 (bohea) -- WireGuard UDP 51820
-  SSH: ssh -i D:/ssh-keys/lbqg.pem <user>@<ip>
-
-Groups: sg-auto (URLTest: hy2-sg/ss-sg), agent-group (Selector: agent-sg/agent-us)
-
-Fallback (when all proxy nodes unreachable):
-  Azure WireGuard: D:\\ssh-keys\\azure-au-wg.conf (connect in WireGuard client)
-  US OpenVPN: D:\\vpn-configs\\us-openvpn-tcp.ovpn (OpenVPN, TCP 443)
+Server inventory (IPs/SSH keys), proxy node groups, and fallback (WireGuard/OpenVPN)
+configs are environment-specific and kept LOCALLY, not in this repo:
+see D:\\vpn-configs\\architecture.md on this machine.
 """
 import json
 import os
