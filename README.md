@@ -54,7 +54,7 @@ uv pip compile requirements.txt -o requirements.lock   # 锁依赖(可复现)
 
 | MCP | 端口 | 宿主 | 工具 |
 |---|---|---|---|
-| `vpn` | 8001 | Windows | `vpn_restart`(原子重启 sing-box 服务) |
+| `vpn` | 8001 | Windows | `vpn_restart`(原子重启) `vpn_status`(查节点/延迟) `vpn_logs`(查最近报错) |
 | `identity` | 8101 | WSL | 9 个模型身份/运行环境检测 |
 | `md2pdf` | 8110 | WSL | `md_to_pdf`;另开 REST `POST /pdf`(将来公网端点) |
 
