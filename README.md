@@ -54,7 +54,7 @@ uv pip compile requirements.txt -o requirements.lock   # 锁依赖(可复现)
 
 | MCP | 端口 | 宿主 | 工具 |
 |---|---|---|---|
-| `vpn` | 8001 | Windows | `vpn_restart` `vpn_status` `vpn_logs` `vpn_config` `vpn_config_write` `vpn_apply` `vpn_route_test` |
+| `vpn` | 8001 | Windows | `vpn_restart` `vpn_status` `vpn_connectivity_test` `vpn_logs` `vpn_config` `vpn_config_write` `vpn_apply` `vpn_switch_node` `vpn_route_test` |
 | `identity` | 8101 | WSL | 9 个模型身份/运行环境检测 |
 | `md2pdf` | 8110 | WSL | `md_to_pdf`;另开 REST `POST /pdf`(将来公网端点) |
 
