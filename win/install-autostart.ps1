@@ -22,8 +22,10 @@ $WinDir = "\\wsl.localhost\Ubuntu\home\bohea\code-workspace\hua-mcp\win"
 $StartAll = Join-Path $WinDir "start-all.ps1"
 if (-not (Test-Path $StartAll)) { throw "start-all.ps1 not found at $StartAll - fix the path above." }
 
-$action  = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$StartAll`""
+# conhost --headless: with Windows Terminal as the default terminal, a plain
+# "-WindowStyle Hidden" powershell still flashes a visible window at logon.
+$action  = New-ScheduledTaskAction -Execute "conhost.exe" `
+    -Argument "--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$StartAll`""
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries -StartWhenAvailable

@@ -4,6 +4,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# PM2 injects NODE_CHANNEL_FD (its IPC pipe fd) into children. Any node we spawn
+# later (puppeteer print.js, mmdc) inherits it, tries to use that dead fd, and
+# SIGABRTs. Strip it here so child node processes start clean.
+unset NODE_CHANNEL_FD
+
 NIX="${NIX:-/nix/var/nix/profiles/default/bin/nix}"
 
 exec "$NIX" develop -c bash -c '

@@ -28,4 +28,12 @@ for ($i = 1; $i -le $maxAttempts; $i++) {
 if (-not (Test-Path $py)) { uv venv $venv }
 $req = if (Test-Path (Join-Path $src "requirements.lock")) { Join-Path $src "requirements.lock" } else { Join-Path $src "requirements.txt" }
 uv pip install -q --python $py -r $req
-& $py (Join-Path $src "server.py")
+# Headless launch (no console window) -> logs must go to a file or they're lost.
+# Redirect via cmd /c, NOT PowerShell (*>>): under ErrorActionPreference=Stop, PS turns
+# the first redirected stderr line (uvicorn logs to stderr) into a terminating error
+# and kills the server.
+$log = Join-Path $env:LOCALAPPDATA "hua-mcp\$name\server.log"
+$env:PYTHONUNBUFFERED = "1"
+Add-Content $log "[$(Get-Date -Format s)] run.ps1: launching server.py"
+cmd /c "`"$py`" `"$(Join-Path $src 'server.py')`" >> `"$log`" 2>&1"
+Add-Content $log "[$(Get-Date -Format s)] run.ps1: server.py exited (code=$LASTEXITCODE)"

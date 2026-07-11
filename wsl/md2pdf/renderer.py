@@ -39,7 +39,7 @@ class Md2Pdf:
         """Pure offline SVG generator: mermaid source -> embeddable data URI."""
         pup_cfg = tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w", encoding="utf-8")
         # --no-sandbox is required inside WSL/Nix headless containers.
-        pup_cfg.write(json.dumps({"args": ["--no-sandbox", "--disable-setuid-sandbox"]}))
+        pup_cfg.write(json.dumps({"args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu", "--disable-software-rasterizer", "--disable-dev-shm-usage"]}))
         pup_cfg.close()
 
         temp_in = tempfile.NamedTemporaryFile(suffix=".mmd", delete=False, mode="w", encoding="utf-8")
@@ -114,7 +114,7 @@ class Md2Pdf:
             # Timeout guard so a wedged headless browser can't hang the daemon.
             result = subprocess.run(cmd, cwd=self.base_dir, capture_output=True, text=True, timeout=60)
             if result.returncode != 0:
-                raise RuntimeError(f"puppeteer print failed: {result.stderr[-400:]}")
+                raise RuntimeError(f"puppeteer print failed (code={result.returncode}):\nstdout: {result.stdout.strip()}\nstderr: {result.stderr.strip()}")
             if not os.path.exists(output_path):
                 raise RuntimeError("puppeteer produced no output file")
             return output_path
