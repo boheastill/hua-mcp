@@ -71,9 +71,19 @@ uv pip compile requirements.txt -o requirements.lock   # 锁依赖(可复现)
 # list / validate / test [--live] / down / restart / status / logs [name]
 ```
 
-- **WSL 侧**:`./fleet.sh up` → `./fleet.sh autostart`(底层 PM2,详见 `PM2_MANUAL.md`)。
-- **Windows 侧**(os=win):Windows 上管理员跑一次 `win/install-autostart.ps1`(登录自启,跑 `\\wsl.localhost` 路径下各 MCP 的 `run.ps1`)。
+- **WSL 侧**:`./fleet.sh up` → `./fleet.sh autostart`(底层 PM2,详见 `PM2_MANUAL.md`)。开机自启已装好:systemd 单元 `pm2-bohea`(`pm2 startup` + `pm2 save` 生成),WSL 起来后自动 resurrect 全部 wsl MCP。
+- **Windows 侧**(os=win):Windows 上管理员跑一次 `win/install-autostart.ps1`(登录自启,跑 `\\wsl.localhost` 路径下各 MCP 的 `run.ps1`)。完全静默(无窗口),日志落在 `%LOCALAPPDATA%\hua-mcp\<name>\server.log`。
 - 跨边界靠 `.wslconfig` 的 `networkingMode=mirrored`(已开),两侧 Claude 用同一份 `gen_config.py` 输出。
+
+## 疑难速查(踩过的坑,别再踩)
+
+| 症状 | 根因 | 解法(已内建) |
+|---|---|---|
+| 服务里 node/Chromium 必崩 SIGABRT,手动跑却正常 | PM2 给子进程注入 `NODE_CHANNEL_FD`(IPC fd),孙代 node 拿到死 fd 直接 abort | `run.sh` 开头 `unset NODE_CHANNEL_FD`(模板已带) |
+| 开机弹出可见控制台窗口,`-WindowStyle Hidden` 无效 | Windows Terminal 作为默认终端会无视 Hidden | 启动链用 `conhost.exe --headless`(`start-all.ps1` / `install-autostart.ps1` 已改) |
+| 加了日志重定向后服务"起来即死" | PowerShell 在 `$ErrorActionPreference=Stop` 下,把原生程序被重定向的第一行 stderr(uvicorn 日志走 stderr)当成致命错误,杀掉进程 | 长驻进程用 `cmd /c "... >> log 2>&1"` 做重定向(`run.ps1` 模板已带) |
+
+排查入口:WSL 侧 `pm2 logs mcp-<name>-<port>`;Windows 侧 `%LOCALAPPDATA%\hua-mcp\<name>\server.log`。从 WSL 测 Windows 自启链路要用 `Start-ScheduledTask -TaskName hua-mcp-win`(直接 interop 拉起的进程树会随命令结束被回收,测不准)。
 
 ## 可复现 / 可测
 

@@ -95,3 +95,12 @@ pm2 startup
 1. 先用 `pm2 logs mcp-identity-8101` 看最后报错的具体信息。
 2. 确认 `uv` 是否在系统 PATH 中，如果 PM2 找不到 `uv`，服务会起不来。
 3. 检查代码本身是否有 SyntaxError 导致一启动就崩溃。
+4. **服务里再起 node(puppeteer/mmdc 等)必崩 SIGABRT、但手动跑正常**：PM2 会向子进程注入
+   `NODE_CHANNEL_FD` 环境变量（它的 IPC 管道 fd），孙代 node 拿到一个已失效的 fd 直接 abort。
+   解法：`run.sh` 开头 `unset NODE_CHANNEL_FD`（`_template/run.sh` 已内建）。
+
+## 6. 本机开机自启（已配置）
+
+本机已装 systemd 单元 `pm2-bohea`（`sudo env "PATH=$PATH:<nvm bin>" pm2 startup systemd -u bohea --hp /home/bohea` 生成，
+注意 `"PATH=..."` 必须带引号——WSL 的 PATH 里混有带空格的 Windows 路径）。改动进程列表后记得 `pm2 save`，
+否则重启后 resurrect 的还是旧快照。验证：`systemctl is-enabled pm2-bohea`。

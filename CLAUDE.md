@@ -68,3 +68,8 @@ pre-commit hook (`./fleet.sh install-hooks`) runs validate + Python syntax autom
 - Don't hardcode ports, hosts, or auth in a server.py — that's `mcp.json` + `huamcp`.
 - Don't put Windows-only deps (pywin32 etc.) in a `wsl/` MCP, or vice versa.
 - Don't bypass `fleet.sh new` for port selection (you'll risk a collision).
+- Don't "simplify away" the odd-looking guard lines in the launchers — each one fixes a
+  real production kill (see README "疑难速查"): `unset NODE_CHANNEL_FD` in `run.sh`
+  (PM2's IPC fd SIGABRTs any child node), `conhost --headless` in the win autostart
+  chain (Windows Terminal ignores `-WindowStyle Hidden`), and `cmd /c "... >> log 2>&1"`
+  in `run.ps1` (PowerShell's own stderr redirection kills the server on its first log line).
