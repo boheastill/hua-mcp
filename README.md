@@ -1,91 +1,134 @@
-# 🔌 hua-mcp — MCP 舰队
+# hua-mcp — a fleet of MCP servers, with no central registry
 
-一份代码、按宿主系统分桶、**一个 MCP 一个目录一个端口**。任何 agent(Win 的 Claude、WSL 的 Claude)只连 `localhost:<端口>`,不关心服务实际在哪台机跑。
+**One MCP = one directory = one port.** Adding a server means copying a
+template directory; removing one means deleting it. Nothing in the middle needs
+editing, because every tool that manages the fleet discovers it by *scanning*
+`*/*/mcp.json` rather than reading a list someone has to remember to update.
 
-## 结构
+The fleet spans two hosts — Windows and WSL — and agents on either side just
+connect to `localhost:<port>` without caring which machine the server actually
+runs on.
 
+*[中文版 → README.zh.md](README.zh.md)*
+
+```bash
+git clone https://github.com/boheastill/hua-mcp && cd hua-mcp
+./fleet.sh validate     # every mcp.json well-formed, ports unique and in band
+./fleet.sh test         # install deps + import each server (smoke)
+./fleet.sh up           # start the WSL servers under PM2
+./fleet.sh health       # curl every /health
 ```
-huamcp.py          共享运行时(绑定/health/鉴权/传输)——你只管写工具
-fleet.sh           一键入口(validate/test/up/down/health/config…)
-gen_config.py      扫描 */*/mcp.json → 生成客户端 .mcp.json
-_template/         复制它来新建一个 MCP
-win/   <name>/     Windows 主机启动(任务计划)
-wsl/   <name>/     WSL 启动(PM2)
-```
 
-一个 MCP 目录 = `server.py` + `mcp.json` + `requirements.txt`(+`requirements.lock`)+ `run.sh`(wsl)/`run.ps1`(win)。`mcp.json`(`name`/`port`/`os`/`public`/可选 `auth_env`)是它**唯一的元数据**,没有中心 registry。
+## The contract: your server file only declares tools
 
-## 契约(为什么 agent 改它不易出错)
-
-`server.py` 只做一件事:**声明工具**。横切关注点全在 `huamcp.py` 一处:
+Every cross-cutting concern — bind address, `/health`, bearer auth, transport
+selection — lives once, in `huamcp.py`. A server is therefore just tool
+declarations, and an agent editing one has very little room to get it wrong:
 
 ```python
 import pathlib, sys
 for _p in pathlib.Path(__file__).resolve().parents:
-    if (_p/"huamcp.py").exists(): sys.path.insert(0, str(_p)); break
+    if (_p / "huamcp.py").exists():
+        sys.path.insert(0, str(_p)); break
 import huamcp
 
-mcp = huamcp.server(__file__)          # 读自己的 mcp.json,绑定+/health+鉴权
+mcp = huamcp.server(__file__)      # reads its own mcp.json: bind + /health + auth
 
 @mcp.tool()
-def my_tool(...): ...                   # ← agent 只动这里
+def my_tool(...): ...              # ← the only part that varies
 
 if __name__ == "__main__":
-    huamcp.run(mcp)                     # streamable-http(--stdio 切本地)
+    huamcp.run(mcp)                # streamable-http (--stdio for local)
 ```
 
-- **安全默认**:`huamcp` 绑 `127.0.0.1`。公网开放才用 `--public`(或 `HUAMCP_PUBLIC=1`)绑 `0.0.0.0`。WSL2 mirrored 网络下 `127.0.0.1` 仍 Win↔WSL 双向可达,所以安全默认不影响舰队。
-- **统一鉴权缝**:`mcp.json` 里写 `auth_env`(或设 `HUAMCP_TOKEN`)并给该环境变量赋值后,除 `/health` 外所有路由都要 `Authorization: Bearer <token>`;不设 = 开放(本地)。**公网化 = 配一个环境变量,不改代码。**
-- **统一 `/health`**:`{ok,mcp,os,port,public}`,每个 MCP 一致。
+`mcp.json` (`name` / `port` / `os` / `public` / optional `auth_env`) is a
+server's **only** metadata. There is no registry file to drift out of sync.
 
-## 加 / 改 / 删一个 MCP
+## Design decisions worth stealing
 
-```bash
-cp -r _template wsl/myname        # 或 win/myname;改 mcp.json(name==目录名/port/os)
-# 在 server.py 写 @mcp.tool();依赖进 requirements.txt
-uv pip compile requirements.txt -o requirements.lock   # 锁依赖(可复现)
-./fleet.sh validate               # 校验:键全/端口唯一且在段内/文件齐(出错即退 1)
-./fleet.sh test                   # 冒烟:每个 MCP 装依赖 + import server
-./fleet.sh up                     # 起(wsl);win 重跑 win/install-autostart.ps1
-```
-删一个 MCP = 删目录(+ `./fleet.sh down` 前)。`fleet.sh`/`gen_config.py` 全靠扫描发现,**永不需要改中心文件**。端口段:`win 8001-8099`,`wsl 8100+`。
+* **Secure by default, public by opt-in.** `huamcp` binds `127.0.0.1`. Exposing
+  a server means `--public` (or `HUAMCP_PUBLIC=1`), never an accidental default.
+  Under WSL2 mirrored networking, `127.0.0.1` is still reachable in both
+  directions between Windows and WSL — so the safe default costs the fleet
+  nothing.
+* **Auth is a seam, not a rewrite.** Set `auth_env` in `mcp.json` and give that
+  environment variable a value: every route except `/health` now requires
+  `Authorization: Bearer <token>`. Going from private to internet-facing is a
+  config change, not a code change.
+* **Uniform `/health`.** `{ok, mcp, os, port, public}`, identical everywhere, so
+  one loop checks the whole fleet.
+* **Gates, not vibes.** `validate` (keys present, ports unique and inside the
+  host's band, required files exist) and `test` (install + import every server)
+  both exit non-zero. `test --live` actually starts each server and curls it.
+* **Pinned everything.** Python via `requirements.lock` (`uv pip compile`), Node
+  via committed `package-lock.json` (`npm ci`), and for the PDF renderer a Nix
+  flake pinning Chromium and the fonts — because "works on my machine" is a
+  worse bug in a personal fleet than in a product, since you are the only one
+  who will ever debug it.
 
-## 现有 MCP
+Port bands: `win 8001–8099`, `wsl 8100+`.
 
-| MCP | 端口 | 宿主 | 工具 |
-|---|---|---|---|
-| `vpn` | 8001 | Windows | `vpn_restart` `vpn_status` `vpn_connectivity_test` `vpn_logs` `vpn_config` `vpn_config_write` `vpn_apply` `vpn_switch_node` `vpn_route_test` |
-| `identity` | 8101 | WSL | 9 个模型身份/运行环境检测 |
-| `md2pdf` | 8110 | WSL | `md_to_pdf`;另开 REST `POST /pdf`(将来公网端点) |
+## The three things that killed servers in production
 
-> 范围:hua-mcp 只收**个人通用**工具。业务/项目耦合的企业级 MCP(如 `ics`)留在各自项目。
+These cost me real evenings. They are all fixed in the templates, and they are
+the reason this repo exists as something to copy rather than notes in a file:
 
-## 跑 / 自启(脚本都在仓库里)
-
-```bash
-./fleet.sh doctor     # 查 uv/node/pm2/nix
-./fleet.sh up         # PM2 拉起全部 wsl MCP(各一进程)
-./fleet.sh health     # 逐个 curl /health
-./fleet.sh autostart  # pm2 save + 提示开机自启命令
-./fleet.sh config     # 生成客户端 .mcp.json
-# list / validate / test [--live] / down / restart / status / logs [name]
-```
-
-- **WSL 侧**:`./fleet.sh up` → `./fleet.sh autostart`(底层 PM2,详见 `PM2_MANUAL.md`)。开机自启已装好:systemd 单元 `pm2-bohea`(`pm2 startup` + `pm2 save` 生成),WSL 起来后自动 resurrect 全部 wsl MCP。
-- **Windows 侧**(os=win):Windows 上管理员跑一次 `win/install-autostart.ps1`(登录自启,跑 `\\wsl.localhost` 路径下各 MCP 的 `run.ps1`)。完全静默(无窗口),日志落在 `%LOCALAPPDATA%\hua-mcp\<name>\server.log`。
-- 跨边界靠 `.wslconfig` 的 `networkingMode=mirrored`(已开),两侧 Claude 用同一份 `gen_config.py` 输出。
-
-## 疑难速查(踩过的坑,别再踩)
-
-| 症状 | 根因 | 解法(已内建) |
+| Symptom | Root cause | Fix (already in the template) |
 |---|---|---|
-| 服务里 node/Chromium 必崩 SIGABRT,手动跑却正常 | PM2 给子进程注入 `NODE_CHANNEL_FD`(IPC fd),孙代 node 拿到死 fd 直接 abort | `run.sh` 开头 `unset NODE_CHANNEL_FD`(模板已带) |
-| 开机弹出可见控制台窗口,`-WindowStyle Hidden` 无效 | Windows Terminal 作为默认终端会无视 Hidden | 启动链用 `conhost.exe --headless`(`start-all.ps1` / `install-autostart.ps1` 已改) |
-| 加了日志重定向后服务"起来即死" | PowerShell 在 `$ErrorActionPreference=Stop` 下,把原生程序被重定向的第一行 stderr(uvicorn 日志走 stderr)当成致命错误,杀掉进程 | 长驻进程用 `cmd /c "... >> log 2>&1"` 做重定向(`run.ps1` 模板已带) |
+| Node/Chromium aborts with SIGABRT under the service manager, but runs fine by hand | PM2 injects `NODE_CHANNEL_FD` into children; a *grandchild* node process inherits a dead IPC fd and aborts on startup | `unset NODE_CHANNEL_FD` at the top of `run.sh` |
+| A console window appears at login even with `-WindowStyle Hidden` | Windows Terminal, as the default terminal application, ignores `Hidden` | Launch through `conhost.exe --headless` |
+| Service "starts then instantly dies" — but only after adding log redirection | With `$ErrorActionPreference = "Stop"`, PowerShell treats the first stderr line of a redirected native program as fatal — and uvicorn logs to stderr | Redirect via `cmd /c "... >> log 2>&1"` for long-running processes |
 
-排查入口:WSL 侧 `pm2 logs mcp-<name>-<port>`;Windows 侧 `%LOCALAPPDATA%\hua-mcp\<name>\server.log`。从 WSL 测 Windows 自启链路要用 `Start-ScheduledTask -TaskName hua-mcp-win`(直接 interop 拉起的进程树会随命令结束被回收,测不准)。
+Debugging entry points: `pm2 logs mcp-<name>-<port>` on WSL;
+`%LOCALAPPDATA%\hua-mcp\<name>\server.log` on Windows. To test the Windows
+autostart chain *from* WSL, use `Start-ScheduledTask -TaskName hua-mcp-win` — a
+process tree launched directly through interop gets reaped when the interop
+command returns, so testing it that way gives you a false negative.
 
-## 可复现 / 可测
+## Adding, changing, removing a server
 
-- 依赖锁定:python 用 `requirements.lock`(`uv pip compile`,run 脚本优先用它),node 用提交的 `package-lock.json`(`npm ci`),md2pdf 系统层用 `flake.lock` 钉 Chromium/字体。
-- `./fleet.sh validate` + `./fleet.sh test` 是每次改动的安全闸门;`--live` 还会真起来 curl `/health`。
+```bash
+cp -r _template wsl/myname          # or win/myname
+$EDITOR wsl/myname/mcp.json         # name == directory name, port, os
+$EDITOR wsl/myname/server.py        # write @mcp.tool()
+uv pip compile requirements.txt -o requirements.lock
+./fleet.sh validate && ./fleet.sh test
+./fleet.sh up
+```
+
+Removing one is `./fleet.sh down` then `rm -rf` the directory. `fleet.sh` and
+`gen_config.py` find what exists by scanning, so **no central file is ever
+edited**.
+
+## What's in the fleet here
+
+| MCP | Port | Host | What it does |
+|---|---|---|---|
+| `vpn` | 8001 | Windows | Manage a local sing-box proxy: status, restart, connectivity and route tests, log tail, config read/validate/write, node switching |
+| `identity` | 8101 | WSL | Nine checks an agent can run to work out *which model it is actually running as* — env analysis, DNS/endpoint verification, runtime and process inspection, fused into a confidence score with counter-evidence stated |
+| `md2pdf` | 8110 | WSL | Markdown → PDF, fully offline: mermaid blocks pre-rendered to inline base64 SVG by a locally installed `mmdc` (no network, no `npx` cold start), CJK-safe fonts pinned by Nix. Exposed both as an MCP tool and as `POST /pdf` |
+
+Environment-specific data — server inventories, SSH keys, proxy node groups —
+is kept outside this repo by design; the `vpn` server documents where it looks
+without shipping any of it.
+
+Scope: this fleet holds **personal, general-purpose** tools. Project-coupled
+servers belong in their own projects.
+
+## What this is and isn't
+
+This is infrastructure I actually run every day, published because the shape of
+it — scan-don't-register, one shared runtime, safe-by-default binding, gates
+that exit non-zero — is the part worth copying. It is not a framework, it has no
+plugin API, and it makes no attempt to be generic beyond two hosts and a handful
+of servers. If you run more than a handful, you probably want something with a
+supervisor and a service discovery story; the ideas here should still port.
+
+## Related
+
+* [boheastill.com/demos](https://boheastill.com/demos/?r=gh-hua-mcp) — other runnable demos
+* [`wsl/md2pdf`](wsl/md2pdf) — the offline markdown→PDF renderer, usable on its own
+
+## License
+
+MIT — see [LICENSE](LICENSE).
