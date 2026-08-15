@@ -89,3 +89,7 @@ uv pip compile requirements.txt -o requirements.lock   # 锁依赖(可复现)
 
 - 依赖锁定:python 用 `requirements.lock`(`uv pip compile`,run 脚本优先用它),node 用提交的 `package-lock.json`(`npm ci`),md2pdf 系统层用 `flake.lock` 钉 Chromium/字体。
 - `./fleet.sh validate` + `./fleet.sh test` 是每次改动的安全闸门;`--live` 还会真起来 curl `/health`。
+
+## 运维经验
+
+新成员检查单、streamable-http 会话铁律(重启 MCP 后必须重启客户端)、各客户端接线位置、DSH 平滑重启、agy 特记 —— 见 [OPS_NOTES.md](OPS_NOTES.md)。

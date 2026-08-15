@@ -1,0 +1,7 @@
+{
+  "name": "agy",
+  "port": 8103,
+  "os": "wsl",
+  "public": false,
+  "desc": "Antigravity 全模态代理: agy_ask(prompt, paths?) — 一次性 print 模式委托, 文本/图片/联网/复杂推理。"
+}
