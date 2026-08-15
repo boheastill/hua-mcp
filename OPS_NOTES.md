@@ -88,3 +88,17 @@ nohup bash -c 'sleep 35; systemctl --user restart dsh-web' >/tmp/dsh-restart.log
 
 这条决策已写进 wsl/glmvision、wsl/agy、wsl/agy-sdk 三个成员的
 工具描述, Claude/Codex/harness 任何客户端看到的 schema 即含此指南。
+
+## 八、gemini-sub 桥 (订阅额度 OpenAI 兼容端点, 8120)
+
+- 位置: `wsl/gemini-sub/` (run.sh + .venv), pm2 托管 `gemini-sub-8120`, 非 MCP。
+- 底层: `antigravity-auth` 库 (opencode 方案的 Python 移植) — 自己实现 OAuth + 内部 Cloud Code API,
+  **不 spawn agy 二进制, 不经过官方 SDK**。订阅额度(Gemini 3 / Claude 4.5)。
+- 登录态: **直接导入 agy CLI 的 refresh_token**(免浏览器登录):
+  `~/.gemini/antigravity-cli/antigravity-oauth-token` → `antigravity_auth.storage.add_or_update_account(refresh_token=..., email=...)`。
+- 端点: `http://127.0.0.1:8120` `/health` `/v1/models` `/v1/chat/completions`(流式) `/v1/images/generations`。
+- **能力边界: 不支持工具调用**(纯文本/图生成) → 只适合当"模型 API", 不能当 agent。
+- harness 接入: `~/.dsh/settings.yaml` 的 `llm-pi-ai.providers.gemini-sub` (openai-completions,
+  baseURL /v1, apiKeyEnv GEMINI_SUB_KEY), 热加载即生效, 无需重启。
+- CC 接入: 协议层可加 Anthropic shim, 但**桥无工具调用 → CC 直连桥只能纯聊天, 不实用**, 不建议。
+- 注意: 未公开内部 API, Google 一改可能失效; 个人自用安全港。
