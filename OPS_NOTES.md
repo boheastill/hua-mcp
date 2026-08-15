@@ -63,3 +63,14 @@ nohup bash -c 'sleep 35; systemctl --user restart dsh-web' >/tmp/dsh-restart.log
   ```
 - 额度: 无官方无头接口; 方案 = PTY 驱动 TUI 的 `/usage` 面板(见 `wsl/agy/server.py` 的 `_capture_usage_panel`: 自动确认信任 → 发 `/usage\r` → 抓屏解析)
 - 多轮协作: `agy_ask` 返回 `conversation_id`, 下次调用传 `conversation` 参数续聊(同一会话勿并发)
+
+## 六、agy-sdk (官方 SDK 版) 现状与结论 (2026-08-15)
+
+- 成员 `wsl/agy-sdk` (8105), 工具 `mcp__agy-sdk__agy_sdk_ask`, 描述注明"建议优先, 不通回退 agy"。
+- **SDK 鉴权限制(实测)**: `google-antigravity` 的 localharness 强制把 `api_key` 作为
+  `x-goog-api-key` 发出; 而 Code Assist 订阅端点 (aicode.googleapis.com) 只认
+  `Authorization: Bearer` OAuth。因此 **SDK Agent 会话无法走订阅额度**, 会快速失败。
+- 裸 httpx + Bearer 能过鉴权(401→400), 但请求体格式未明, 且高频探测触发连接重置
+  (Google 侧风控)——**不要拿它当稳定通道**。
+- 结论: CLI 版 (8103) 继续是订阅额度的唯一稳定通道; SDK 版等官方支持 Bearer 后自动点亮,
+  到时只需 `pm2 restart mcp-agy-sdk-8105` + 重启客户端, 无需改任何接线。

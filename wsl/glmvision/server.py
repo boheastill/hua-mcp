@@ -25,6 +25,31 @@ API = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 mcp = huamcp.server(__file__)
 
 
+def _sniff_image_mime(p: pathlib.Path) -> str:
+    """按文件头魔数识别图片类型;返回空串表示不是已知图片。
+
+    附件/临时文件经常没有扩展名(如 DSH 内容寻址附件),mimetypes 只会看后缀,
+    这里先嗅探字节再退回后缀判断。
+    """
+    try:
+        head = p.read_bytes()[:32]
+    except OSError:
+        return ""
+    for sig, mime in (
+        (b"\x89PNG\r\n\x1a\n", "image/png"),
+        (b"\xff\xd8\xff", "image/jpeg"),
+        (b"GIF87a", "image/gif"),
+        (b"GIF89a", "image/gif"),
+        (b"RIFF", "image/webp"),  # 还需 offset 8 处的 WEBP 标记
+        (b"BM", "image/bmp"),
+    ):
+        if head.startswith(sig):
+            if mime == "image/webp" and head[8:12] != b"WEBP":
+                continue
+            return mime
+    return ""
+
+
 def _key() -> str:
     v = os.environ.get("GLM_API_KEY", "").strip()
     if v:
@@ -50,12 +75,13 @@ def describe_image(path: str, question: str = "", model: str = "glm-5v-turbo") -
 
 path 是图片文件的绝对路径(建议, 服务器无法感知调用方工作区); question 是
 针对图片的具体问题, 可省略(默认详细描述全图)。纯文本主模型看图用这个工具。
-model 可选: 默认 glm-5v-turbo(视觉旗舰); 也可指定 glm-4.6v-flash(免费, 限速)。
+model 可选: 默认 glm-5v-turbo(视觉旗舰)。遇到 429(余额不足/限速)时按
+turbo → glm-4.6v-flash → glm-4v-flash 自动降级到免费档, 一次调用即得结果。
 """
     p = pathlib.Path(path).expanduser()
     if not p.is_file():
         return f"图片文件不存在: {path}"
-    mime = mimetypes.guess_type(str(p))[0] or ""
+    mime = _sniff_image_mime(p) or (mimetypes.guess_type(str(p))[0] or "")
     if not mime.startswith("image/"):
         return f"不支持的图片格式: {path} (支持 png/jpg/jpeg/webp/gif/bmp)"
     key = _key()
@@ -63,32 +89,61 @@ model 可选: 默认 glm-5v-turbo(视觉旗舰); 也可指定 glm-4.6v-flash(免
         return "缺少 GLM_API_KEY (环境变量或 ~/.glm/key.txt)"
     b64 = base64.b64encode(p.read_bytes()).decode()
     q = question.strip() or "请详细描述这张图片的内容。"
-    body: dict[str, Any] = {
-        "model": model.strip() or "glm-5v-turbo",
-        "max_tokens": 4096,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-                    {"type": "text", "text": q},
-                ],
-            }
-        ],
-    }
-    try:
-        r = requests.post(
-            API,
-            headers={"content-type": "application/json", "Authorization": f"Bearer {key}"},
-            json=body,
-            timeout=180,
-        )
-        data = r.json()
-    except Exception as e:  # noqa: BLE001 — 工具要给 agent 可读的错误而不是抛出
-        return f"GLM API 请求失败: {e}"
+
+    def _post(model_id: str, max_tokens: int) -> tuple[Any, Any]:
+        body: dict[str, Any] = {
+            "model": model_id,
+            "max_tokens": max_tokens,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                        {"type": "text", "text": q},
+                    ],
+                }
+            ],
+        }
+        try:
+            r = requests.post(
+                API,
+                headers={"content-type": "application/json", "Authorization": f"Bearer {key}"},
+                json=body,
+                timeout=180,
+            )
+            return r, r.json()
+        except Exception as e:  # noqa: BLE001 — 工具要给 agent 可读的错误而不是抛出
+            raise RuntimeError(f"GLM API 请求失败: {e}") from e
+
+    # 降级链: 付费旗舰 → 新一代免费档 → 老一代免费档(后者 max_tokens 上限 1024)。
+    # 只对 429(余额/限速)降级; 其他错误(参数/鉴权等)原样上报, 不掩盖。
+    CHAIN: list[tuple[str, int]] = [
+        ("glm-5v-turbo", 4096),
+        ("glm-4.6v-flash", 4096),
+        ("glm-4v-flash", 1024),
+    ]
+    requested = model.strip() or "glm-5v-turbo"
+    start = next((i for i, (m, _) in enumerate(CHAIN) if m == requested), 0)
+    tried: list[str] = []
+    r: Any = None
+    data: Any = None
+    for model_id, max_tokens in CHAIN[start:]:
+        tried.append(model_id)
+        try:
+            r, data = _post(model_id, max_tokens)
+        except RuntimeError as e:
+            return str(e)
+        if r.status_code == 200:
+            break
+        if r.status_code != 429:
+            break
     if r.status_code != 200:
-        return f"GLM API 错误 ({r.status_code}): {str(data)[:400]}"
-    return data.get("choices", [{}])[0].get("message", {}).get("content") or "(空回复)"
+        tail = " → ".join(tried)
+        return f"GLM API 错误 ({r.status_code}, 尝试过 {tail}): {str(data)[:400]}"
+    content = data.get("choices", [{}])[0].get("message", {}).get("content") or "(空回复)"
+    if len(tried) > 1:
+        return f"[已自动降级到 {tried[-1]}({' → '.join(tried[:-1])} 不可用)]\n" + content
+    return content
 
 
 if __name__ == "__main__":

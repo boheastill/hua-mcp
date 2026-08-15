@@ -1,0 +1,7 @@
+{
+  "name": "agy-sdk",
+  "port": 8105,
+  "os": "wsl",
+  "public": false,
+  "desc": "Antigravity 官方 SDK 版 (google-antigravity): agy_sdk_ask(prompt,...) 建议优先, 不通回退 agy(CLI)。"
+}
