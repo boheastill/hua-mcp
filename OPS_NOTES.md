@@ -142,6 +142,17 @@ nohup bash -c 'sleep 35; systemctl --user restart dsh-web' >/tmp/dsh-restart.log
 - Antigravity 配额: gemini-3-flash + claude 系 (走 cloudcode-pa 内部端点)
 - Gemini CLI 配额: gemini-2.5-pro/flash (走 GEMINI_CLI_ENDPOINT 端点)
 
+**最终确认 (2026-08-16 二轮排查)**:
+- CLI 会话库记录的真实 wire 名: gemini-3.7-flash / gemini-3.7-flash-high / claude-sonnet-4-6 /
+  gemini-3.5-flash-extra-low。版本化名在 CLI 侧真实存在。
+- 桥侧照抄 CLI 请求(streamGenerateContent + 全名 + 真实 project + Bearer)仍 404
+  "Requested entity was not found" → 桥无法直连版本化模型, CLI 请求链路有未复刻部分。
+- 桥可用清单(已确认): gemini-3-flash(无版本别名, 当前 Antigravity agent persona)、
+  claude-sonnet-4-6 / claude-opus-4-6-thinking / claude-4.5 系(Antigravity 通道)、
+  gemini-2.5-flash/pro(Gemini CLI 配额通道)。
+- 桥不可用: gemini-3.x 版本化名、gemini-3-pro、gpt-oss。
+- 结论: "用桥拿 gemini 3.7" 到此为止(库/协议缺口), gemini 3.7 agent 活走 mcp__agy__agy_ask。
+
 **loadCodeAssist 获取真实 project**:
 ```python
 POST https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist
