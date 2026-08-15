@@ -1,9 +1,13 @@
 """Antigravity agent MCP — 把终端里的全模态 agent (agy) 暴露为 MCP 工具。
 
 工具:
-  agy_ask(prompt, paths?, model?, effort?) — 一次性 print 模式委托
+  agy_ask(prompt, paths?, model?, effort?, conversation?) — 一次性 print 模式委托
   agy_quota() — 查模型额度剩余 (驱动 TUI 的 /usage 面板, PTY 抓取)
 agy 的登录态/配置由它自己在 ~/.gemini 等位置管理, 本服务不碰。
+
+注意: 每个工具的整个函数体都必须被 try/except 兜底——
+未处理异常会让 FastMCP 清理该 streamable-http 会话,
+客户端随后所有调用都会报 Session not found (-32600)。
 """
 import pathlib
 import sys
@@ -59,51 +63,59 @@ def agy_ask(
 【返回】结论文本 + conversation_id + 本次 token 用量。
 【代价】每次调用数秒到数分钟; 在 agy 本地留一条会话记录; 按 agy 账户计费。
 """
-    args = [
-        AGY, "-p", prompt,
-        "--dangerously-skip-permissions",
-        "--output-format", "json",
-        "--print-timeout", "4m",
-    ]
-    if model.strip():
-        args += ["--model", model.strip()]
-    if effort.strip():
-        args += ["--effort", effort.strip()]
-    if conversation.strip():
-        args += ["--conversation", conversation.strip()]
-    for raw in paths or []:
-        if not isinstance(raw, str) or not raw:
-            continue
-        d = pathlib.Path(raw).expanduser()
-        args += ["--add-dir", str(d.parent if d.is_file() else d)]
     try:
-        r = subprocess.run(
-            args, capture_output=True, text=True, timeout=CALL_TIMEOUT_S,
-            cwd=str(pathlib.Path.home()),
-        )
-    except subprocess.TimeoutExpired:
-        return f"agy 超时 ({CALL_TIMEOUT_S}s)"
-    if r.returncode != 0:
-        return f"agy 失败 (exit {r.returncode}): {r.stderr.strip()[-400:]}"
-    out = r.stdout.strip()
-    try:
-        j = json.loads(out.splitlines()[-1])
-    except (ValueError, IndexError):
-        return out[-8000:] or "(空输出)"
-    if j.get("status") and j["status"] != "SUCCESS":
-        return f"agy 状态 {j['status']}: {str(j.get('error', ''))[:400]}"
-    resp = j.get("response") or "(空回复)"
-    cid = j.get("conversation_id") or ""
-    if cid:
-        resp += f"\n\n[会话ID] {cid} (续聊时把它传给 conversation 参数)"
-    usage = j.get("usage") or {}
-    if usage:
-        resp += (
-            f"\n[本次用量] 输入 {usage.get('input_tokens', '?')} / "
-            f"输出 {usage.get('output_tokens', '?')} / "
-            f"思考 {usage.get('thinking_tokens', '?')} tokens"
-        )
-    return resp
+        args = [
+            AGY, "-p", prompt,
+            "--dangerously-skip-permissions",
+            "--output-format", "json",
+            "--print-timeout", "4m",
+        ]
+        if model.strip():
+            args += ["--model", model.strip()]
+        if effort.strip():
+            args += ["--effort", effort.strip()]
+        if conversation.strip():
+            args += ["--conversation", conversation.strip()]
+        for raw in paths or []:
+            if not isinstance(raw, str) or not raw:
+                continue
+            d = pathlib.Path(raw).expanduser()
+            args += ["--add-dir", str(d.parent if d.is_file() else d)]
+        for attempt in (1, 2):
+            try:
+                r = subprocess.run(
+                    args, capture_output=True, text=True, timeout=CALL_TIMEOUT_S,
+                    cwd=str(pathlib.Path.home()),
+                )
+            except subprocess.TimeoutExpired:
+                return f"agy 超时 ({CALL_TIMEOUT_S}s)"
+            if r.returncode == 0:
+                break
+            if attempt == 1:
+                time.sleep(2)  # 瞬时失败(如并发的 agy 实例锁)重试一次
+        if r.returncode != 0:
+            return f"agy 失败 (exit {r.returncode}): {r.stderr.strip()[-400:]}"
+        out = r.stdout.strip()
+        try:
+            j = json.loads(out.splitlines()[-1])
+        except (ValueError, IndexError):
+            return out[-8000:] or "(空输出)"
+        if j.get("status") and j["status"] != "SUCCESS":
+            return f"agy 状态 {j['status']}: {str(j.get('error', ''))[:400]}"
+        resp = j.get("response") or "(空回复)"
+        cid = j.get("conversation_id") or ""
+        if cid:
+            resp += f"\n\n[会话ID] {cid} (续聊时把它传给 conversation 参数)"
+        usage = j.get("usage") or {}
+        if usage:
+            resp += (
+                f"\n[本次用量] 输入 {usage.get('input_tokens', '?')} / "
+                f"输出 {usage.get('output_tokens', '?')} / "
+                f"思考 {usage.get('thinking_tokens', '?')} tokens"
+            )
+        return resp
+    except Exception as e:  # noqa: BLE001 — 绝不让异常杀死 MCP 会话
+        return f"工具内部错误: {type(e).__name__}: {e}"
 
 
 def _capture_usage_panel(timeout_s: int = 60) -> str:
@@ -164,20 +176,23 @@ def agy_quota() -> str:
 返回各模型组(Gemini / Claude+GPT)的周额度和 5 小时额度的剩余百分比与重置时间。
 每次调用约 10~30 秒(需要拉起 agy TUI 抓取 /usage 面板)。
 """
-    text = _capture_usage_panel()
-    keep: List[str] = []
-    for line in text.splitlines():
-        s = re.sub(r"[ \t]+", " ", line).strip()
-        if not s:
-            continue
-        if re.search(
-            r"Account:|MODELS$|Weekly Limit Remaining|Five Hour Limit Remaining|remaining · Refreshes",
-            s,
-        ):
-            keep.append(s)
-    if not keep:
-        return "未能解析额度面板(可能未登录或网络问题)。原始输出尾部:\n" + text[-400:]
-    return "agy 额度剩余:\n" + "\n".join(keep)
+    try:
+        text = _capture_usage_panel()
+        keep: List[str] = []
+        for line in text.splitlines():
+            s = re.sub(r"[ \t]+", " ", line).strip()
+            if not s:
+                continue
+            if re.search(
+                r"Account:|MODELS$|Weekly Limit Remaining|Five Hour Limit Remaining|remaining · Refreshes",
+                s,
+            ):
+                keep.append(s)
+        if not keep:
+            return "未能解析额度面板(可能未登录或网络问题)。原始输出尾部:\n" + text[-400:]
+        return "agy 额度剩余:\n" + "\n".join(keep)
+    except Exception as e:  # noqa: BLE001 — 绝不让异常杀死 MCP 会话
+        return f"工具内部错误: {type(e).__name__}: {e}"
 
 
 if __name__ == "__main__":
