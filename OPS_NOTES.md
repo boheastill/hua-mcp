@@ -122,3 +122,30 @@ nohup bash -c 'sleep 35; systemctl --user restart dsh-web' >/tmp/dsh-restart.log
 - 探测成本警告: 一次调用 = 库内部 3 端点 × 3 重试 ≈ 9 个请求, 别连环试, 有风控风险。
 - 谨慎原则: 探测性调用会污染库的限流状态 (accounts.json rateLimitResetTimes),
   恢复: 清空该字段 + pm2 restart gemini-sub-8120。
+
+## 十、gemini-sub 根因修复 (2026-08-16): project_id + 版本化名不存在
+
+**根因**: antigravity-auth 库写死了演示 project_id `rising-fact-p41fc`。
+真实 Code Assist project 是 `bamboo-coast-6zftk` (通过 loadCodeAssist 获取)。
+错误 project 下后端会**静默回落到默认模型**(请求 claude 返回 gemini-2.5-flash 的输出)，
+而非报错——极其隐蔽。
+
+**修复**: `constants.py` 里 `ANTIGRAVITY_DEFAULT_PROJECT_ID = "bamboo-coast-6zftk"`。
+
+**关于版本化名 (gemini-3.7/3.6/3.5)**:
+- 内部通道**不认版本化名** (404), 只有 `gemini-3-flash` / `gemini-3-pro`
+- 无版本名 = 当前最新版 (gemini-3-flash 现在就是 3.7 Flash)
+- thinking 通过 `-high/-low` 后缀 → thinkingLevel 参数, 不是模型名的一部分
+- `gemini-3-pro` 在 Antigravity 通道 404 (当前无 pro 档)
+
+**配额双通道**:
+- Antigravity 配额: gemini-3-flash + claude 系 (走 cloudcode-pa 内部端点)
+- Gemini CLI 配额: gemini-2.5-pro/flash (走 GEMINI_CLI_ENDPOINT 端点)
+
+**loadCodeAssist 获取真实 project**:
+```python
+POST https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist
+Headers: Authorization Bearer <token>, User-Agent antigravity/1.1.13 windows/amd64
+Body: {"metadata": {"ideType": "ANTIGRAVITY"}}
+→ response.cloudaicompanionProject
+```
