@@ -102,3 +102,18 @@ nohup bash -c 'sleep 35; systemctl --user restart dsh-web' >/tmp/dsh-restart.log
   baseURL /v1, apiKeyEnv GEMINI_SUB_KEY), 热加载即生效, 无需重启。
 - CC 接入: 协议层可加 Anthropic shim, 但**桥无工具调用 → CC 直连桥只能纯聊天, 不实用**, 不建议。
 - 注意: 未公开内部 API, Google 一改可能失效; 个人自用安全港。
+
+## 九、gemini-sub 新模型实测结论 (2026-08-16)
+
+| 模型 | 状态 | 说明 |
+|------|------|------|
+| claude-sonnet-4-6 / claude-opus-4-6-thinking | ✅ 可用 | 桥直接支持, harness 已加 |
+| gemini-3-pro / gemini-3-flash / gemini-2.5-* / claude-4.5 系 | ✅ 可用 | 库原生支持 |
+| gemini-3.7 / 3.6 / 3.5 / 3.1-pro | ❌ 403 | 库的 gemini 3.x 路由只认无版本号名; 已给 client.py 打补丁让
+  resolve_gemini3_model 识别版本化名, 但 403 是路由/宿主层问题, 等 antigravity-auth 上游更新 |
+| gpt-oss-120b | ❌ 403 | 库不支持该模型族 |
+
+- 补丁位置: `.venv/site-packages/antigravity_auth/client.py` 的 is_pro/is_flash 正则
+  (venv 重装会丢, 重装后要重打)。
+- 谨慎原则: 探测性调用会污染库的限流状态 (accounts.json rateLimitResetTimes),
+  恢复: 清空该字段 + pm2 restart gemini-sub-8120。
