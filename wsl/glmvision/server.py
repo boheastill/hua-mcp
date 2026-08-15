@@ -71,12 +71,18 @@ def _key() -> str:
 
 @mcp.tool()
 def describe_image(path: str, question: str = "", model: str = "glm-5v-turbo") -> str:
-    """用智谱 GLM 视觉模型识别本地图片内容。
+    """用智谱 GLM 视觉模型识别本地图片内容 — 看图的第一选择。
 
-path 是图片文件的绝对路径(建议, 服务器无法感知调用方工作区); question 是
-针对图片的具体问题, 可省略(默认详细描述全图)。纯文本主模型看图用这个工具。
-model 可选: 默认 glm-5v-turbo(视觉旗舰)。遇到 429(余额不足/限速)时按
-turbo → glm-4.6v-flash → glm-4v-flash 自动降级到免费档, 一次调用即得结果。
+【何时用】主模型是纯文本(如 DeepSeek/GLM 文本档)时需要看图、OCR、
+识别截图/设计稿/图表: 这是最快最便宜的看图通道(秒级响应, 不耗 agy 额度,
+不留会话)。遇到图就用它, 不要绕道到 agy。
+
+【何时别用】需要"看图 + 深度推理/联网/多步操作"的复合任务 → 交给
+mcp__agy__agy_ask(或 mcp__agy-sdk__agy_sdk_ask), 它们能自己看图并继续推理。
+
+【参数】path 图片绝对路径(建议; 服务器无法感知调用方工作区); question 针对
+图片的具体问题(可选, 默认详细描述); model 默认 glm-5v-turbo(视觉旗舰)。
+429(余额/限速)时自动降级: glm-5v-turbo → glm-4.6v-flash → glm-4v-flash。
 """
     p = pathlib.Path(path).expanduser()
     if not p.is_file():

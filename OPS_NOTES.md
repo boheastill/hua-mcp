@@ -74,3 +74,17 @@ nohup bash -c 'sleep 35; systemctl --user restart dsh-web' >/tmp/dsh-restart.log
   (Google 侧风控)——**不要拿它当稳定通道**。
 - 结论: CLI 版 (8103) 继续是订阅额度的唯一稳定通道; SDK 版等官方支持 Bearer 后自动点亮,
   到时只需 `pm2 restart mcp-agy-sdk-8105` + 重启客户端, 无需改任何接线。
+
+## 七、委托决策指南 (已内建到各工具描述, 所有客户端可见)
+
+| 场景 | 用谁 | 理由 |
+|---|---|---|
+| 纯看图 / OCR / 截图识别 | `mcp__glmvision__describe_image` | 秒级、便宜、不走 agy 额度、不留会话; 429 自动降级免费档 |
+| 看图 + 深度推理 / 联网 / 多步操作 | `mcp__agy__agy_ask` (或 agy-sdk) | agy 自己看图并继续推理 |
+| 复杂推理 / 联网调研 / 重活 | `mcp__agy__agy_ask` | 主模型不够用时外包 |
+| 简单问答 / 主模型自己能答的 | **别调** | 省额度省时间 |
+| 批量任务前 | `mcp__agy__agy_quota` | 油表, 防中途耗尽 |
+| 多轮追问 | 传回上次的 `[会话ID]` 给 conversation | 同一会话续聊, 别另开 |
+
+这条决策已写进 wsl/glmvision、wsl/agy、wsl/agy-sdk 三个成员的
+工具描述, Claude/Codex/harness 任何客户端看到的 schema 即含此指南。

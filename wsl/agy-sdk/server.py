@@ -75,14 +75,19 @@ def agy_sdk_ask(
     effort: str = "high",
     conversation: str = "",
 ) -> str:
-    """【建议优先】用 Antigravity 官方 SDK 委托全模态 agent (同款 agy 账户/额度)。
+    """【建议优先】用 Antigravity 官方 SDK 委托全模态 agent (同款账户/额度)。
 
-与 CLI 版 mcp__agy__agy_ask 等价能力(读文件/看图/联网/内部循环), 走进程内
-SDK 通道。**若本工具报"SDK 通道不可用/401/连接重置", 请直接回退用
-mcp__agy__agy_ask**(CLI 订阅版, 稳定)。
+决策同 mcp__agy__agy_ask:
+- 何时用: 深度推理 / 看图+推理复合 / 联网调研 / 多步工具操作
+- 何时别用: 纯看图 → mcp__glmvision__describe_image; 简单任务别调(烧额度);
+  重活前先查 mcp__agy__agy_quota
+- 续聊: 返回含 [会话ID], 把上一个 conversation_id 传回 conversation 参数
 
-【参数】prompt 任务描述(引用文件写绝对路径并列入 paths); paths 开放给 agent
-读的文件/目录(省略默认整个家目录); model 默认 gemini-3.7-flash-high;
+【回退】若本工具报"SDK 通道不可用/401/连接重置"(SDK 鉴权限制), 直接改用
+mcp__agy__agy_ask (CLI 订阅版, 稳定)。
+
+【参数】prompt 任务描述(引用文件写绝对路径并列入 paths); paths 开放给
+agent 读的文件/目录(省略默认整个家目录); model 默认 gemini-3.7-flash-high;
 effort low|medium|high 默认 high; conversation 传上次返回的会话ID续聊。
 【代价】数秒到数分钟; 本地留一条会话记录; 按 agy 账户额度计费。
 """

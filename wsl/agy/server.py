@@ -45,23 +45,27 @@ def agy_ask(
     effort: str = "high",
     conversation: str = "",
 ) -> str:
-    """调用终端里的 Antigravity agent (agy, 全模态) 执行一次性任务。
+    """调用终端里的 Antigravity agent (agy, 全模态) — 复杂任务的外包通道。
 
-【用途】把复杂/多模态/需联网的独立任务整包委托给 agy: 它会自己读文件、
-看图、上网、跑工具、内部循环, 最后只把结论带回来。适合 DeepSeek 主代理
-"外包重活"。纯看图且要便宜请用 glmvision 的 describe_image(秒级、不留会话)。
+【何时用】(派重活前先查 mcp__agy__agy_quota 剩余额度)
+- 深度推理/复杂分析: 主模型(如 DeepSeek/GLM 文本)想不通、需要更强推理时
+- 看图+推理复合任务: 截图/设计稿/流程图 需要"看懂并继续分析"
+- 联网调研: 需要实时查证、聚合多来源信息
+- 多步工具操作: 读文件+看文件+跑命令一条龙
 
-【参数】
-- prompt: 任务描述。要引用文件时写绝对路径, 并把路径也放进 paths。
-- paths: 需要开放给 agy 读的文件/目录列表(会加入它的工作区)。
-- model: 默认 gemini-3.7-flash-high(强推理)。可换 claude-opus-4-6-thinking、
-  gemini-3.1-pro-high 等(`agy models` 是完整列表)。
-- effort: 推理档 low|medium|high, 默认 high(最高)。
-- conversation: 上次 agy_ask 返回的 conversation_id。传入即可在同一会话
-  续聊(多轮协作、追问、带着上次上下文继续), 留空=新开会话。
+【何时别用】(别乱烧额度)
+- 纯看图: 用 mcp__glmvision__describe_image(秒级、便宜、不留会话)
+- 简单问答/主模型自己能答的: 别调, agy 慢(数秒~数分钟)且消耗额度
+- 大批量任务前: 先 mcp__agy__agy_quota, 额度不足时拆小任务或用 glmvision
 
-【返回】结论文本 + conversation_id + 本次 token 用量。
-【代价】每次调用数秒到数分钟; 在 agy 本地留一条会话记录; 按 agy 账户计费。
+【参数】prompt 任务描述(引用文件写绝对路径并列入 paths); paths 开放给
+agy 读的文件/目录(省略默认整个家目录); model 默认 gemini-3.7-flash-high
+(可换 claude-opus-4-6-thinking 等, `agy models` 查列表); effort low|medium|
+high 默认 high(简单确认类可降 low 提速省钱); conversation 传上次返回的
+[会话ID] 在同一会话续聊(追问/多轮), 不要为追问另开新会话。
+
+【返回】结论 + [会话ID](续聊用) + 本次 token 用量。
+【代价】数秒~数分钟; 本地留一条会话记录; 按 agy 账户额度计费。
 """
     try:
         args = [
@@ -171,10 +175,11 @@ def _capture_usage_panel(timeout_s: int = 60) -> str:
 
 @mcp.tool()
 def agy_quota() -> str:
-    """查询 agy (Antigravity) 的模型额度剩余。
+    """查询 agy (Antigravity) 的模型额度剩余 — 派重活前的"油表"。
 
-返回各模型组(Gemini / Claude+GPT)的周额度和 5 小时额度的剩余百分比与重置时间。
-每次调用约 10~30 秒(需要拉起 agy TUI 抓取 /usage 面板)。
+【何时用】准备批量委托/大任务前先查: 返回 Gemini / Claude+GPT 两组的周额度
+与 5 小时额度剩余百分比和重置时间。剩余不足时把任务拆小, 或改用
+glmvision(不走 agy 额度)。每次调用 10~30 秒(拉起 agy TUI), 不要高频轮询。
 """
     try:
         text = _capture_usage_panel()
