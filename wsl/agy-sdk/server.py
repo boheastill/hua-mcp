@@ -68,7 +68,7 @@ def _effort_model(model: str, effort: str) -> str:
 
 
 @mcp.tool()
-def agy_sdk_ask(
+async def agy_sdk_ask(
     prompt: str,
     paths: Optional[List[str]] = None,
     model: str = DEFAULT_MODEL,
@@ -99,30 +99,28 @@ effort low|medium|high 默认 high; conversation 传上次返回的会话ID续�
         if not workspaces:
             workspaces = [str(pathlib.Path.home())]
 
-        async def run():
-            # localharness 强制 api_key 非空; 端点实际只认 Bearer OAuth。
-            endpoint = GeminiAPIEndpoint(
-                base_url=AICODE_HOST,
-                api_key=tok,  # 占位满足校验, 真实鉴权走下面的 Authorization 头
-                http_headers={"Authorization": f"Bearer {tok}"},
-            )
-            target = ModelTarget(
-                name=_effort_model(model, effort),
-                types=list(types.ModelType),
-                endpoint=endpoint,
-            )
-            config = LocalAgentConfig(
-                models=[target],
-                policies=[allow_all()],
-                workspaces=workspaces,
-                conversation_id=conversation.strip() or None,
-            )
-            async with Agent(config) as agent:
-                resp = await asyncio.wait_for(agent.chat(prompt), CALL_TIMEOUT_S)
-                text = await asyncio.wait_for(resp.text(), CALL_TIMEOUT_S)
-                return text or "(空回复)", agent.conversation_id
-
-        text, cid = asyncio.run(run())
+        # localharness 强制 api_key 非空; 端点实际只认 Bearer OAuth。
+        endpoint = GeminiAPIEndpoint(
+            base_url=AICODE_HOST,
+            api_key=tok,  # 占位满足校验, 真实鉴权走下面的 Authorization 头
+            http_headers={"Authorization": f"Bearer {tok}"},
+        )
+        target = ModelTarget(
+            name=_effort_model(model, effort),
+            types=list(types.ModelType),
+            endpoint=endpoint,
+        )
+        config = LocalAgentConfig(
+            models=[target],
+            policies=[allow_all()],
+            workspaces=workspaces,
+            conversation_id=conversation.strip() or None,
+        )
+        async with Agent(config) as agent:
+            resp = await asyncio.wait_for(agent.chat(prompt), CALL_TIMEOUT_S)
+            text = await asyncio.wait_for(resp.text(), CALL_TIMEOUT_S)
+            text = text or "(空回复)"
+            cid = agent.conversation_id
         if cid:
             text += f"\n\n[会话ID] {cid} (续聊时把它传给 conversation 参数)"
         return text
