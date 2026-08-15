@@ -113,7 +113,12 @@ nohup bash -c 'sleep 35; systemctl --user restart dsh-web' >/tmp/dsh-restart.log
   resolve_gemini3_model 识别版本化名, 但 403 是路由/宿主层问题, 等 antigravity-auth 上游更新 |
 | gpt-oss-120b | ❌ 403 | 库不支持该模型族 |
 
-- 补丁位置: `.venv/site-packages/antigravity_auth/client.py` 的 is_pro/is_flash 正则
-  (venv 重装会丢, 重装后要重打)。
+- 补丁位置: `.venv/site-packages/antigravity_auth/client.py` 的 is_pro/is_flash 正则 +
+  `constants.py` 的 UA 版本(1.11.5→1.1.13)。venv 重装会丢, 重装后要重打。
+- 已排查: 模型名语法(社区用 thinkingLevel 参数 + :antigravity 后缀路由, 库已实现)、
+  限流状态(清 accounts.json)、UA 版本(1.1.13)——3.7 仍 403。
+  推测: 库的默认 project_id 通道没覆盖 3.7(CLI 用自己 workspace 的 project),
+  或请求体/requestType 差异。等 antigravity-auth 上游更新(模型表滞后于 CLI)。
+- 探测成本警告: 一次调用 = 库内部 3 端点 × 3 重试 ≈ 9 个请求, 别连环试, 有风控风险。
 - 谨慎原则: 探测性调用会污染库的限流状态 (accounts.json rateLimitResetTimes),
   恢复: 清空该字段 + pm2 restart gemini-sub-8120。
