@@ -1,0 +1,7 @@
+{
+  "name": "local-model",
+  "port": 8105,
+  "os": "wsl",
+  "public": false,
+  "desc": "Local Qwen model delegation via Ollama CPU (stateless query, classification, summarization)."
+}

@@ -1,0 +1,7 @@
+{
+  "name": "ics-core",
+  "port": 8104,
+  "os": "wsl",
+  "public": false,
+  "desc": "ICS-Core message stream and cross-device sync."
+}
