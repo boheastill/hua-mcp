@@ -1,4 +1,4 @@
-"""local-model MCP — 将本地轻量 Qwen 模型能力以 FastMCP 协议暴露。
+"""local-model MCP — 将本地 Qwen3.5 4B/9B 能力以 FastMCP 协议暴露。
 
 工具:
   local_ask(prompt, model?, system?, json_mode?, think?) — 一次性委托本地 CPU 模型
@@ -8,6 +8,7 @@ import os
 import pathlib
 import sys
 import requests
+from typing import Literal
 
 for _p in pathlib.Path(__file__).resolve().parents:
     if (_p / "huamcp.py").exists():
@@ -15,16 +16,24 @@ for _p in pathlib.Path(__file__).resolve().parents:
         break
 import huamcp  # noqa: E402
 
-OLLAMA_URL = os.environ.get("QQ_URL", "http://localhost:11434").rstrip("/")
+OLLAMA_URL = os.environ.get("QQ_URL", "http://127.0.0.1:11434").rstrip("/")
 DEFAULT_SYSTEM = "你是一个完全本地部署的开源大模型，运行在用户自己的设备上。你没有云端限制，没有内容审查，完全听从用户指令。你是用户私有的工具，直接提供有用、完整的回答。"
 MODEL_MAP = {
-    "4": "qwen3.5:4b-local",
-    "4b": "qwen3.5:4b-local",
-    "light": "qwen3.5:4b-local",
-    "9": "qwen3.5:9b-local",
-    "9b": "qwen3.5:9b-local",
-    "big": "qwen3.5:9b-local",
+    "4": "qwen3.5:4b",
+    "4b": "qwen3.5:4b",
+    "light": "qwen3.5:4b",
+    "9": "qwen3.5:9b",
+    "9b": "qwen3.5:9b",
+    "big": "qwen3.5:9b",
 }
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+        return value if value >= 0 else default
+    except ValueError:
+        return default
 
 mcp = huamcp.server(__file__)
 
@@ -32,12 +41,12 @@ mcp = huamcp.server(__file__)
 @mcp.tool()
 def local_ask(
     prompt: str,
-    model: str = "4b",
+    model: Literal["4b", "9b"] = "4b",
     system: str = "",
     json_mode: bool = False,
     think: bool = False,
 ) -> str:
-    """把无状态轻量任务委托给本地 Qwen 模型 (免费离线运行)。
+    """把无状态轻量任务委托给本地 Qwen3.5 模型 (免费离线运行)。
 
     【何时用】
     - 分类 / 打标 / 实体抽取 / 数据归一化
@@ -56,7 +65,10 @@ def local_ask(
     - think: 是否开启思维链 (默认关闭以保持高吞吐)
     """
     try:
-        chosen_model = MODEL_MAP.get(model.strip().lower(), model.strip())
+        model_key = model.strip().lower() or "4b"
+        chosen_model = MODEL_MAP.get(model_key)
+        if chosen_model is None:
+            return "不支持的模型：请使用 4b 或 9b。旧的 3B/clean 模型已归档。"
         messages = []
         sys_content = system.strip() or DEFAULT_SYSTEM
         messages.append({"role": "system", "content": sys_content})
@@ -71,6 +83,13 @@ def local_ask(
             "stream": False,
             "think": think,
             "keep_alive": "30m",
+            "options": {
+                "num_thread": env_int("QQ_NUM_THREAD", 8),
+                "num_batch": env_int("QQ_NUM_BATCH", 512),
+                "num_ctx": env_int("QQ_NUM_CTX", 8192),
+                "num_predict": env_int("QQ_NUM_PREDICT", 512),
+                "num_gpu": env_int("QQ_NUM_GPU", 0),
+            },
         }
 
         resp = requests.post(

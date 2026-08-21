@@ -38,6 +38,7 @@
 | WSL Claude | `~/.claude.json` → `mcpServers` | `{"type":"http","url":"http://localhost:8103/mcp"}` |
 | Win Claude | `C:\Users\bohea\.claude.json` → `mcpServers` | 同上 |
 | Codex | `~/.codex/config.toml` | `[mcp_servers.agy]` + `url = "http://127.0.0.1:8103/mcp"` |
+| 本地 Qwen | 同上 | `[mcp_servers.local_model]` + `url = "http://127.0.0.1:8105/mcp"` |
 | agy 自身 | `~/.gemini/antigravity-cli/mcp_config.json` | (它的 MCP 客户端) |
 | 一键生成 | `python gen_config.py > fleet-mcp.json` | 扫全部 `*/*/mcp.json` |
 
@@ -64,16 +65,12 @@ nohup bash -c 'sleep 35; systemctl --user restart dsh-web' >/tmp/dsh-restart.log
 - 额度: 无官方无头接口; 方案 = PTY 驱动 TUI 的 `/usage` 面板(见 `wsl/agy/server.py` 的 `_capture_usage_panel`: 自动确认信任 → 发 `/usage\r` → 抓屏解析)
 - 多轮协作: `agy_ask` 返回 `conversation_id`, 下次调用传 `conversation` 参数续聊(同一会话勿并发)
 
-## 六、agy-sdk (官方 SDK 版) 现状与结论 (2026-08-15)
+## 六、本地模型 (8105) 现状与结论
 
-- 成员 `wsl/agy-sdk` (8105), 工具 `mcp__agy-sdk__agy_sdk_ask`, 描述注明"建议优先, 不通回退 agy"。
-- **SDK 鉴权限制(实测)**: `google-antigravity` 的 localharness 强制把 `api_key` 作为
-  `x-goog-api-key` 发出; 而 Code Assist 订阅端点 (aicode.googleapis.com) 只认
-  `Authorization: Bearer` OAuth。因此 **SDK Agent 会话无法走订阅额度**, 会快速失败。
-- 裸 httpx + Bearer 能过鉴权(401→400), 但请求体格式未明, 且高频探测触发连接重置
-  (Google 侧风控)——**不要拿它当稳定通道**。
-- 结论: CLI 版 (8103) 继续是订阅额度的唯一稳定通道; SDK 版等官方支持 Bearer 后自动点亮,
-  到时只需 `pm2 restart mcp-agy-sdk-8105` + 重启客户端, 无需改任何接线。
+- 当前唯一占用 8105 的成员是 `wsl/local-model`；旧的 `agy-sdk` 8105 记录已退休，不能再作为端口或客户端接线依据。
+- `local-model` 只调用官方 Ollama `qwen3.5:4b` / `qwen3.5:9b`，工具为无状态 `local_ask`，默认 4B。
+- WSL mirrored networking 下，WSL、Windows Claude 和 Windows 侧其他 MCP 客户端统一使用 `http://127.0.0.1:8105/mcp`；服务默认回环绑定。
+- 该服务重启后，Claude/Codex 需新开会话，DSH 需重启 web 服务，以重新建立 Streamable HTTP session。
 
 ## 七、委托决策指南 (已内建到各工具描述, 所有客户端可见)
 

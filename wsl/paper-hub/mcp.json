@@ -1,0 +1,7 @@
+{
+  "name": "paper-hub",
+  "port": 8121,
+  "os": "wsl",
+  "public": false,
+  "desc": "Human-in-the-Physical-Loop AI Hub. Create physical interactive paper tasks with security headers, choice widgets, and mobile feedback QR codes; check human response status."
+}
