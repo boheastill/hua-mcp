@@ -52,7 +52,7 @@ def _token_for(meta: dict) -> str | None:
 def server(server_file: str) -> FastMCP:
     """Build a FastMCP for the MCP whose dir contains ``server_file``'s mcp.json."""
     meta = load_meta(server_file)
-    public = "--public" in sys.argv or os.environ.get("HUAMCP_PUBLIC") == "1"
+    public = "--public" in sys.argv or os.environ.get("HUAMCP_PUBLIC") == "1" or bool(meta.get("public"))
     host = "0.0.0.0" if public else "127.0.0.1"
     port = int(os.environ.get("HUAMCP_PORT", meta["port"]))
 

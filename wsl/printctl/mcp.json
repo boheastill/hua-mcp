@@ -2,6 +2,6 @@
   "name": "printctl",
   "port": 8120,
   "os": "wsl",
-  "public": false,
+  "public": true,
   "desc": "Universal Driverless Print & Scan Engine. Provides direct physical printing (images/PDFs with auto layout), optical scanning (75-600 DPI), auto-discovery, and hardware status."
 }
