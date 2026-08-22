@@ -41,18 +41,39 @@ def print_file(file_path: str, printer_ip: str = "") -> str:
 
     【功能】
     自动进行 Alpha 拍平（杜绝透明 PNG 打印成大黑底）、自动计算 A4 比例等比缩放、
-    强制预留 5mm 硬件物理安全边距防裁切，通过 IPP 协议直推打印机物理出纸。
+    强制预留 5mm 硬件物理安全边距防裁切。若输入为 PDF，自动光栅化为 300 DPI 高清流发送至硬件。
     """
     p = _to_wsl_path(file_path)
     if not p.is_file():
         return f"错误: 待打印文件不存在: {file_path} (WSL 解析路径: {p})"
 
-    cmd = [BIN_PATH, "print", str(p), "--json"]
+    # If input is a PDF, rasterize pages to 300 DPI high-quality JPEGs to prevent G3030 hardware rejection
+    files_to_print = [str(p)]
+    if p.suffix.lower() == ".pdf":
+        try:
+            import pymupdf
+            doc = pymupdf.open(str(p))
+            tmp_images = []
+            tmp_dir = pathlib.Path("/tmp/printctl_pdf_pages")
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            for page_idx in range(len(doc)):
+                page = doc[page_idx]
+                pix = page.get_pixmap(dpi=300)
+                page_out = tmp_dir / f"page_{page_idx+1}.jpg"
+                pix.save(str(page_out))
+                tmp_images.append(str(page_out))
+            doc.close()
+            if tmp_images:
+                files_to_print = tmp_images
+        except Exception as e:
+            pass
+
+    cmd = [BIN_PATH, "print"] + files_to_print + ["--json"]
     if printer_ip.strip():
         cmd.extend(["--ip", printer_ip.strip()])
 
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if res.returncode == 0:
             return f"✅ 打印任务已成功发送至打印机！文件: {file_path}\n{res.stdout}"
         return f"❌ 打印失败: {res.stderr or res.stdout}"
