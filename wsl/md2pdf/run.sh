@@ -11,11 +11,17 @@ unset NODE_CHANNEL_FD
 
 NIX="${NIX:-/nix/var/nix/profiles/default/bin/nix}"
 
-exec "$NIX" develop -c bash -c '
-  set -euo pipefail
-  [ -d .venv ] || uv venv .venv
-  req=requirements.txt; [ -f requirements.lock ] && req=requirements.lock
-  VIRTUAL_ENV="$PWD/.venv" uv pip install -q -r "$req"
-  [ -d node_modules ] || { [ -f package-lock.json ] && npm ci --no-audit --no-fund || npm install --no-audit --no-fund; }
-  exec .venv/bin/python server.py
-'
+HEAD=$(mktemp)
+cat > "$HEAD" <<'EOINNER'
+set -euo pipefail
+[ -d .venv ] || uv venv .venv
+req=requirements.txt; [ -f requirements.lock ] && req=requirements.lock
+VIRTUAL_ENV="$PWD/.venv" uv pip install -q -r "$req"
+[ -d node_modules ] || { [ -f package-lock.json ] && npm ci --no-audit --no-fund || npm install --no-audit --no-fund; }
+exec .venv/bin/python server.py
+EOINNER
+if [ -x "$NIX" ]; then
+  exec "$NIX" develop -c bash "$HEAD"
+fi
+echo "[md2pdf] nix 不在,走本机依赖(需 chrome/node/CJK字体)"
+exec bash "$HEAD"
