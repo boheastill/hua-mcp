@@ -6,6 +6,7 @@
 3. printer_status: 查询打印机在线状态与就绪遥测
 4. discover_printers: 局域网毫秒级扫描可用网络打印机
 """
+import os
 import pathlib
 import subprocess
 import sys
@@ -16,7 +17,8 @@ for _p in pathlib.Path(__file__).resolve().parents:
         break
 import huamcp  # noqa: E402
 
-BIN_PATH = "/home/bohea/print/printctl/bin/printctl"
+BIN_PATH = os.environ.get("PRINTCTL_BIN",
+    "/home/bohea/bh-workspace/infra/printctl/bin/printctl")
 
 mcp = huamcp.server(__file__)
 
