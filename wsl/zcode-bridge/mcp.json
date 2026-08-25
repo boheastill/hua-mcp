@@ -1,0 +1,7 @@
+{
+  "name": "zcode-bridge",
+  "port": 8123,
+  "os": "wsl",
+  "public": false,
+  "desc": "Drive the local zcode agent (GLM-5.3 via OAuth 1.5x quota channel) as a coding executor. One call = submit task + wait for result."
+}
