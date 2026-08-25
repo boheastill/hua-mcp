@@ -1,0 +1,7 @@
+{
+  "name": "phone-eye",
+  "port": 8122,
+  "os": "wsl",
+  "public": false,
+  "desc": "Agent eyes and hands on a real Android phone. phone_look (vision Q&A over the live screen), phone_tap/swipe/type, phone_screenshot. Pluggable vision (cloud GLM / local Qwen-VL), adb over LAN."
+}
