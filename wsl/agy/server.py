@@ -98,7 +98,8 @@ high 默认 high(简单确认类可降 low 提速省钱); conversation 传上次
             if attempt == 1:
                 time.sleep(2)  # 瞬时失败(如并发的 agy 实例锁)重试一次
         if r.returncode != 0:
-            return f"agy 失败 (exit {r.returncode}): {r.stderr.strip()[-400:]}"
+            tail = (r.stderr.strip()[-400:] or r.stdout.strip()[-400:])
+            return f"agy 失败 (exit {r.returncode}): {tail or '(无输出——疑登录态失效, 终端跑 `agy` 看真实报错)'}"
         out = r.stdout.strip()
         try:
             j = json.loads(out.splitlines()[-1])
@@ -123,12 +124,16 @@ high 默认 high(简单确认类可降 low 提速省钱); conversation 传上次
 
 
 def _capture_usage_panel(timeout_s: int = 60) -> str:
-    """在伪终端里驱动 `agy usage`, 自动确认信任、发送 /usage, 抓取额度面板。"""
+    """在伪终端里驱动 agy TUI, 自动确认信任、发送 /usage, 抓取额度面板。
+
+    注意: agy ≥1.1.20 已无 `usage` 子命令(2026-08-26 故障档), 额度面板只能
+    裸起 TUI 后发 /usage 斜杠命令拿。
+    """
     pid, fd = pty.fork()
     if pid == 0:
         os.environ["TERM"] = "xterm-256color"
         os.chdir(str(pathlib.Path.home()))
-        os.execv(AGY, ["agy", "usage"])
+        os.execv(AGY, ["agy"])
     out = b""
     try:
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 45, 130, 0, 0))
