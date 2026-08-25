@@ -20,12 +20,28 @@ for _p in pathlib.Path(__file__).resolve().parents:
 import huamcp  # noqa: E402
 
 ICS_BASE_URL = os.environ.get("ICS_BASE_URL", "https://flow.bohea.us")
-ICS_TOKEN = os.environ.get("ICS_TOKEN", "006e91db7de25746bd029895f9e5f45b")
+
+
+def _load_token() -> str:
+    """ICS_TOKEN env 优先; 否则读 ~/.ics/token (600, 不进 git)。
+    轮换: 改文件内容后 `pm2 restart mcp-ics-core-8104`。"""
+    v = os.environ.get("ICS_TOKEN", "").strip()
+    if v:
+        return v
+    try:
+        return pathlib.Path.home().joinpath(".ics/token").read_text("utf-8").strip()
+    except OSError:
+        return ""
+
+
+ICS_TOKEN = _load_token()
 
 mcp = huamcp.server(__file__)
 
 
 def _get_headers() -> Dict[str, str]:
+    if not ICS_TOKEN:
+        raise RuntimeError("缺少 ICS_TOKEN (env 或 ~/.ics/token, 轮换方法见 CLIENTS.md)")
     return {"X-Auth-Token": ICS_TOKEN}
 
 

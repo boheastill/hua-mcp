@@ -10,6 +10,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 
 for _p in pathlib.Path(__file__).resolve().parents:
     if (_p / "huamcp.py").exists():
@@ -50,14 +51,14 @@ def print_file(file_path: str, printer_ip: str = "") -> str:
         return f"错误: 待打印文件不存在: {file_path} (WSL 解析路径: {p})"
 
     # If input is a PDF, rasterize pages to 300 DPI high-quality JPEGs to prevent G3030 hardware rejection
+    raster_note = ""
     files_to_print = [str(p)]
     if p.suffix.lower() == ".pdf":
         try:
             import pymupdf
             doc = pymupdf.open(str(p))
+            tmp_dir = pathlib.Path(tempfile.mkdtemp(prefix="printctl_pdf_"))
             tmp_images = []
-            tmp_dir = pathlib.Path("/tmp/printctl_pdf_pages")
-            tmp_dir.mkdir(parents=True, exist_ok=True)
             for page_idx in range(len(doc)):
                 page = doc[page_idx]
                 pix = page.get_pixmap(dpi=300)
@@ -67,8 +68,11 @@ def print_file(file_path: str, printer_ip: str = "") -> str:
             doc.close()
             if tmp_images:
                 files_to_print = tmp_images
+                raster_note = f" (PDF 已光栅化为 {len(tmp_images)} 页 300DPI JPEG)"
+        except ImportError:
+            raster_note = " (⚠ pymupdf 未安装, PDF 未光栅化直发——若打印失败先装依赖: uv pip install pymupdf)"
         except Exception as e:
-            pass
+            raster_note = f" (⚠ PDF 光栅化失败({e}), 已改为直发原 PDF——部分打印机会拒收)"
 
     cmd = [BIN_PATH, "print"] + files_to_print + ["--json"]
     if printer_ip.strip():
@@ -77,8 +81,8 @@ def print_file(file_path: str, printer_ip: str = "") -> str:
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if res.returncode == 0:
-            return f"✅ 打印任务已成功发送至打印机！文件: {file_path}\n{res.stdout}"
-        return f"❌ 打印失败: {res.stderr or res.stdout}"
+            return f"✅ 打印任务已成功发送至打印机！文件: {file_path}{raster_note}\n{res.stdout}"
+        return f"❌ 打印失败{raster_note}: {res.stderr or res.stdout}"
     except Exception as e:
         return f"❌ 执行异常: {e}"
 

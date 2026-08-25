@@ -160,7 +160,7 @@ print(next(p for p in range(lo, hi + 1) if p not in used))
 PY
 )
     cp -r _template "$dest"
-    rm -rf "$dest/.venv" "$dest/__pycache__" "$dest/requirements.lock"  # never inherit build artifacts
+    rm -rf "$dest/.venv" "$dest/__pycache__"  # build artifacts only — keep requirements.lock (the pinned mcp SDK is the whole point)
     [ "$os" = wsl ] && rm -f "$dest/run.ps1" || rm -f "$dest/run.sh"
     $PY - "$dest" "$name" "$os" "$port" <<'PY'
 import json, sys

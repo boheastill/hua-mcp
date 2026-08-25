@@ -16,6 +16,7 @@ import base64
 import mimetypes
 import os
 import re
+import time
 from typing import Any
 
 import requests
@@ -23,6 +24,8 @@ import requests
 API = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 
 mcp = huamcp.server(__file__)
+
+_last_good = {"model": "", "ts": 0.0}  # 最近一次 200 的模型(30 分钟内直接从它起步)
 
 
 def _sniff_image_mime(p: pathlib.Path) -> str:
@@ -77,8 +80,8 @@ def describe_image(path: str, question: str = "", model: str = "glm-5v-turbo") -
 识别截图/设计稿/图表: 这是最快最便宜的看图通道(秒级响应, 不耗 agy 额度,
 不留会话)。遇到图就用它, 不要绕道到 agy。
 
-【何时别用】需要"看图 + 深度推理/联网/多步操作"的复合任务 → 交给
-mcp__agy__agy_ask(或 mcp__agy-sdk__agy_sdk_ask), 它们能自己看图并继续推理。
+    【何时别用】需要"看图 + 深度推理/联网/多步操作"的复合任务 → 交给
+    mcp__agy__agy_ask, 它能自己看图并继续推理。
 
 【参数】path 图片绝对路径(建议; 服务器无法感知调用方工作区); question 针对
 图片的具体问题(可选, 默认详细描述); model 默认 glm-5v-turbo(视觉旗舰)。
@@ -123,13 +126,17 @@ mcp__agy__agy_ask(或 mcp__agy-sdk__agy_sdk_ask), 它们能自己看图并继续
 
     # 降级链: 付费旗舰 → 新一代免费档 → 老一代免费档(后者 max_tokens 上限 1024)。
     # 只对 429(余额/限速)降级; 其他错误(参数/鉴权等)原样上报, 不掩盖。
+    # 记住最近一次可用的模型 30 分钟: 订阅不含旗舰时, 免去每次先吃一趟 429。
     CHAIN: list[tuple[str, int]] = [
         ("glm-5v-turbo", 4096),
         ("glm-4.6v-flash", 4096),
         ("glm-4v-flash", 1024),
     ]
+    CHAIN_IDS = [m for m, _ in CHAIN]
     requested = model.strip() or "glm-5v-turbo"
     start = next((i for i, (m, _) in enumerate(CHAIN) if m == requested), 0)
+    if requested == "glm-5v-turbo" and time.time() - _last_good["ts"] < 1800 and _last_good["model"] in CHAIN_IDS:
+        start = CHAIN_IDS.index(_last_good["model"])
     tried: list[str] = []
     r: Any = None
     data: Any = None
@@ -140,6 +147,7 @@ mcp__agy__agy_ask(或 mcp__agy-sdk__agy_sdk_ask), 它们能自己看图并继续
         except RuntimeError as e:
             return str(e)
         if r.status_code == 200:
+            _last_good.update(model=model_id, ts=time.time())
             break
         if r.status_code != 429:
             break

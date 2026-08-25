@@ -6,6 +6,7 @@
 3. list_paper_tasks: 列出所有历史纸张交互任务及当前状态
 """
 import json
+import os
 import pathlib
 import sys
 from typing import Any
@@ -18,7 +19,7 @@ for _p in pathlib.Path(__file__).resolve().parents:
         break
 import huamcp  # noqa: E402
 
-HUB_BASE = "http://127.0.0.1:3088"
+HUB_BASE = os.environ.get("PAPER_HUB_URL", "http://127.0.0.1:3088").rstrip("/")
 
 mcp = huamcp.server(__file__)
 
