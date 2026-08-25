@@ -3,5 +3,5 @@
   "port": 8105,
   "os": "wsl",
   "public": false,
-  "desc": "Local official Qwen3.5 4B/9B delegation via Ollama CPU (stateless query, classification, summarization)."
+  "desc": "Local LLM delegation via lb desktop llama-server (OpenAI-compatible, auto-discovers the live model): local_ask for text, local_vision for images. Model registry: ~/bh-workspace/docs/model-registry."
 }

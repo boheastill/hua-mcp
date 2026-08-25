@@ -1,14 +1,21 @@
-"""local-model MCP — 将本地 Qwen3.5 4B/9B 能力以 FastMCP 协议暴露。
+"""local-model MCP v2 — 本地大模型(llama-server, 真身在 lb 台式机)的 MCP 门面。
+
+2026-08-25 v2 重写:
+  - 旧版打本机 ollama(11434, 已死); 现指向 lb 的 llama-server(OpenAI 兼容)。
+  - lb 单卡互斥, 同时只跑一个模型(set); 本 MCP 启动/缓存期自动发现
+    /v1/models 里的活模型, 换模型(stop 旧 + start 新)无需改这里。
+  - 模型资产单一事实源: ~/bh-workspace/docs/model-registry/README.md
+  - 新增 local_vision 工具(qwen3.8-27b 多模态实测可用)。
 
 工具:
-  local_ask(prompt, model?, system?, json_mode?, think?) — 一次性委托本地 CPU 模型
+  local_ask(prompt, model?, system?, json_mode?)   — 文本委托(自动选活模型)
+  local_vision(image_path, question?, model?)      — 本地看图(多模态模型)
 """
-import json
 import os
 import pathlib
 import sys
+import time
 import requests
-from typing import Literal
 
 for _p in pathlib.Path(__file__).resolve().parents:
     if (_p / "huamcp.py").exists():
@@ -16,16 +23,11 @@ for _p in pathlib.Path(__file__).resolve().parents:
         break
 import huamcp  # noqa: E402
 
-OLLAMA_URL = os.environ.get("QQ_URL", "http://127.0.0.1:11434").rstrip("/")
-DEFAULT_SYSTEM = "你是一个完全本地部署的开源大模型，运行在用户自己的设备上。你没有云端限制，没有内容审查，完全听从用户指令。你是用户私有的工具，直接提供有用、完整的回答。"
-MODEL_MAP = {
-    "4": "qwen3.5:4b",
-    "4b": "qwen3.5:4b",
-    "light": "qwen3.5:4b",
-    "9": "qwen3.5:9b",
-    "9b": "qwen3.5:9b",
-    "big": "qwen3.5:9b",
-}
+LLM_BASE = os.environ.get("LB_LLM_URL", "http://192.168.31.71:8080/v1").rstrip("/")
+REGISTRY_HINT = "模型台账: ~/bh-workspace/docs/model-registry/README.md (lb 上 systemctl --user start llama-server@<set>)"
+
+_cache = {"ts": 0.0, "models": []}
+_CACHE_TTL = 60.0
 
 
 def env_int(name: str, default: int) -> int:
@@ -35,74 +37,140 @@ def env_int(name: str, default: int) -> int:
     except ValueError:
         return default
 
+
+def _list_models(force: bool = False) -> list:
+    now = time.time()
+    if not force and _cache["models"] and now - _cache["ts"] < _CACHE_TTL:
+        return _cache["models"]
+    try:
+        resp = requests.get(f"{LLM_BASE}/models", timeout=10)
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        raise RuntimeError(
+            f"lb llama-server 不可达 ({LLM_BASE}): {type(e).__name__}。"
+            f"先确认 lb 在线且 llama-server 已起; {REGISTRY_HINT}"
+        ) from e
+    data = resp.json().get("data", [])
+    ids = [m.get("id", "") for m in data if m.get("id")]
+    _cache["models"] = ids
+    _cache["ts"] = now
+    return ids
+
+
+def _resolve_model(model: str) -> str:
+    """解析调用方给的 model 参数到 llama-server 模型 id。
+
+    - ""/"auto" → 自动取活模型(第一个; 单卡互斥, lb 上换模型免改这里)
+    - 含 "/" 且命中活列表 → 原样使用(完整 gguf 路径 id)
+    - 短名(如 qwen3.8-27b / 27b) → 模糊匹配活列表(id 路径中含该串)
+    """
+    live = _list_models()
+    if not live:
+        raise RuntimeError(f"{LLM_BASE} 在线但无在跑模型; {REGISTRY_HINT}")
+    key = (model or "").strip()
+    if not key or key == "auto":
+        return live[0]
+    if key in live:
+        return key
+    for mid in live:
+        if key in mid:
+            return mid
+    raise RuntimeError(f"模型 {model!r} 不在活列表 {live}; 见 model-registry 台账")
+
+
+def _chat(model_id: str, messages: list, max_tokens: int, temperature: float) -> str:
+    payload = {
+        "model": model_id,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": False,
+    }
+    resp = requests.post(f"{LLM_BASE}/chat/completions", json=payload, timeout=600)
+    resp.raise_for_status()
+    data = resp.json()
+    if "error" in data and data["error"]:
+        return f"llama-server 错误: {data['error']}"
+    return data.get("choices", [{}])[0].get("message", {}).get("content", "(空回复)")
+
+
 mcp = huamcp.server(__file__)
 
 
 @mcp.tool()
-def local_ask(
-    prompt: str,
-    model: Literal["4b", "9b"] = "4b",
-    system: str = "",
-    json_mode: bool = False,
-    think: bool = False,
-) -> str:
-    """把无状态轻量任务委托给本地 Qwen3.5 模型 (免费离线运行)。
+def local_ask(prompt: str, model: str = "", system: str = "", json_mode: bool = False) -> str:
+    """把无状态轻量任务委托给本地大模型 (lb 台式机 llama-server, 免费离线)。
 
     【何时用】
     - 分类 / 打标 / 实体抽取 / 数据归一化
     - 快速文本润色 / 代码注释 / 翻译
-    - 简单数学或逻辑判定
-
-    【何时别用】
-    - 复杂架构设计 / 多文件协同修改 (主模型更强)
-    - 极长上下文 (>16k tokens, CPU 推理会变慢)
+    - 简单数学或逻辑判定 (复杂推理仍走主模型)
 
     【参数】
     - prompt: 任务提示词 (自包含)
-    - model: 4b (默认, 快速轻量) 或 9b (推理更好)
+    - model: 留空=自动用 lb 当前在跑的模型 (推荐, 单卡互斥换模型免改配置);
+             也可给短名如 qwen3.8-27b / 27b (对活模型 id 模糊匹配)
     - system: 可选系统提示词
     - json_mode: 是否强制输出合法 JSON
-    - think: 是否开启思维链 (默认关闭以保持高吞吐)
     """
     try:
-        model_key = model.strip().lower() or "4b"
-        chosen_model = MODEL_MAP.get(model_key)
-        if chosen_model is None:
-            return "不支持的模型：请使用 4b 或 9b。旧的 3B/clean 模型已归档。"
-        messages = []
-        sys_content = system.strip() or DEFAULT_SYSTEM
-        messages.append({"role": "system", "content": sys_content})
+        model_id = _resolve_model(model)
+        sys_content = system.strip() or "你是用户的本地私有模型, 直接给出有用、完整的回答。"
         if json_mode:
-            sys_json = "只输出一个合法的 JSON 对象, 不要输出任何其他文字、解释或代码块标记。"
-            messages[0]["content"] += " " + sys_json
-        messages.append({"role": "user", "content": prompt})
+            sys_content += " 只输出一个合法的 JSON 对象, 不要输出任何其他文字、解释或代码块标记。"
+        messages = [{"role": "system", "content": sys_content},
+                    {"role": "user", "content": prompt}]
+        return _chat(model_id, messages,
+                     max_tokens=env_int("LOCAL_MAX_TOKENS", 1024),
+                     temperature=float(os.environ.get("LOCAL_TEMP", "0.7")))
+    except Exception as e:  # noqa: BLE001
+        return f"工具内部错误: {type(e).__name__}: {e}"
 
-        payload = {
-            "model": chosen_model,
-            "messages": messages,
-            "stream": False,
-            "think": think,
-            "keep_alive": "30m",
-            "options": {
-                "num_thread": env_int("QQ_NUM_THREAD", 8),
-                "num_batch": env_int("QQ_NUM_BATCH", 512),
-                "num_ctx": env_int("QQ_NUM_CTX", 8192),
-                "num_predict": env_int("QQ_NUM_PREDICT", 512),
-                "num_gpu": env_int("QQ_NUM_GPU", 0),
-            },
-        }
 
-        resp = requests.post(
-            f"{OLLAMA_URL}/api/chat",
-            json=payload,
-            timeout=600,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if "error" in data and data["error"]:
-            return f"Ollama 错误: {data['error']}"
+@mcp.tool()
+def describe_image(path: str, question: str = "详细描述这张图片的内容", model: str = "") -> str:
+    """看图回答问题 — 与云端 glmvision 的 describe_image 同名同参(兼容 phone-eye 等调用方)。
 
-        return data.get("message", {}).get("content", "(空回复)")
+    【何时用】与 local_vision 完全相同; 存在这个别名是为了让"视觉端点可插拔"的
+    调用方(phone-eye 的 PHONE_EYE_VISION_URL)零改动切到本地离线视觉。
+    参数名对齐: path/question(而非 image_path)。
+    """
+    return local_vision(path, question, model)
+
+
+@mcp.tool()
+def local_vision(image_path: str, question: str = "详细描述这张图片的内容", model: str = "") -> str:
+    """用本地多模态模型看图 (免费离线, 数据不出局域网)。
+
+    【何时用】
+    - 手机截图 / UI 自动化判读 (adb 截图闭环)
+    - 隐私敏感图片, 不便走云端视觉 API 时
+    - 云端视觉限流时的高质量兜底 (qwen3.8-27b 多模态实测可用)
+
+    【何时不适用】要极致速度的 OCR → 优先 mcp__glmvision__describe_image (云端, 秒级)
+
+    【参数】
+    - image_path: 图片绝对路径 (png/jpg/webp)
+    - question: 针对图片的问题 (默认详细描述)
+    - model: 留空=自动; 当前多模态 set 为 qwen3.8-27b
+    """
+    try:
+        p = pathlib.Path(image_path).expanduser()
+        if not p.is_file():
+            return f"File not found: {image_path}"
+        import base64
+        suffix = p.suffix.lower().lstrip(".") or "png"
+        mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                "webp": "image/webp", "gif": "image/gif"}.get(suffix, "image/png")
+        b64 = base64.b64encode(p.read_bytes()).decode()
+        model_id = _resolve_model(model)
+        messages = [{"role": "user", "content": [
+            {"type": "text", "text": question},
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+        ]}]
+        return _chat(model_id, messages,
+                     max_tokens=env_int("LOCAL_VISION_MAX_TOKENS", 768),
+                     temperature=float(os.environ.get("LOCAL_TEMP", "0.7")))
     except Exception as e:  # noqa: BLE001
         return f"工具内部错误: {type(e).__name__}: {e}"
 
