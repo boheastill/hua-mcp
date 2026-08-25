@@ -11,6 +11,9 @@ A fleet of MCP servers. **One MCP = one directory = one port.** Grouped by host 
 server at `http://localhost:<port>/mcp` (WSL2 mirrored networking makes localhost work
 both directions).
 
+How each agent CLI (Claude Code / Codex / agy / dsh) wires up to the fleet:
+see **[CLIENTS.md](CLIENTS.md)**. Ops rules and incident history: OPS_NOTES.md.
+
 ## The invariants (do not violate)
 
 1. **A server.py only declares tools.** All plumbing (bind address, `/health`, auth,

@@ -106,7 +106,18 @@ edited**.
 |---|---|---|---|
 | `vpn` | 8001 | Windows | Manage a local sing-box proxy: status, restart, connectivity and route tests, log tail, config read/validate/write, node switching |
 | `identity` | 8101 | WSL | Nine checks an agent can run to work out *which model it is actually running as* — env analysis, DNS/endpoint verification, runtime and process inspection, fused into a confidence score with counter-evidence stated |
+| `glmvision` | 8102 | WSL | `describe_image` — vision/OCR via Zhipu GLM vision models |
+| `agy` | 8103 | WSL | `agy_ask`/`agy_quota` — delegate heavy/Google-grade work to the agy CLI |
+| `ics-core` | 8104 | WSL | ICS message stream: `list_messages` `read_message` `push_message` `push_file` `manage_message` (see the [ics project](../ics/ics-mcp-server/README.md)) |
+| `local-model` | 8105 | WSL | `local_ask` + `local_vision` — local LLM delegation via the lb desktop's llama-server (OpenAI-compatible; auto-discovers the live model, see the model registry) |
 | `md2pdf` | 8110 | WSL | Markdown → PDF, fully offline: mermaid blocks pre-rendered to inline base64 SVG by a locally installed `mmdc` (no network, no `npx` cold start), CJK-safe fonts pinned by Nix. Exposed both as an MCP tool and as `POST /pdf` |
+| `printctl` | 8120 | WSL | LAN printer control: print/scan/status discovery |
+| `paper-hub` | 8121 | WSL | Physical paper tasks: `create_paper_task` etc. |
+| `phone-eye` | 8122 | WSL | Agent eyes and hands on a real phone: `phone_look` (vision Q&A + UI tree), `phone_tap/swipe/type`, `phone_screenshot` — over Wi-Fi adb. Core lives in its own distributable repo; this is the fleet wrapper |
+| `zcode-bridge` | 8123 | WSL | Drive the local zcode agent as a coding executor (OAuth 1.5x quota channel): `zcode_task` / `zcode_status`. Depends on the systemd-hosted bridge (CDP 9222 + HTTP API 9230) |
+
+How each agent CLI (Claude Code / Codex / agy / dsh) wires up to the fleet —
+see **[CLIENTS.md](CLIENTS.md)**.
 
 Environment-specific data — server inventories, SSH keys, proxy node groups —
 is kept outside this repo by design; the `vpn` server documents where it looks

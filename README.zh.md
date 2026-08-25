@@ -11,6 +11,9 @@ gen_config.py      扫描 */*/mcp.json → 生成客户端 .mcp.json
 _template/         复制它来新建一个 MCP
 win/   <name>/     Windows 主机启动(任务计划)
 wsl/   <name>/     WSL 启动(PM2)
+docs/              故障档案(时间线/排查单)
+CLAUDE.md / CLIENTS.md / OPS_NOTES.md / PM2_MANUAL.md
+                   agent 契约 / 客户端接线手册 / 运维经验 / PM2 指南
 ```
 
 一个 MCP 目录 = `server.py` + `mcp.json` + `requirements.txt`(+`requirements.lock`)+ `run.sh`(wsl)/`run.ps1`(win)。`mcp.json`(`name`/`port`/`os`/`public`/可选 `auth_env`)是它**唯一的元数据**,没有中心 registry。
@@ -56,9 +59,19 @@ uv pip compile requirements.txt -o requirements.lock   # 锁依赖(可复现)
 |---|---|---|---|
 | `vpn` | 8001 | Windows | `vpn_restart` `vpn_status` `vpn_connectivity_test` `vpn_logs` `vpn_config` `vpn_config_write` `vpn_apply` `vpn_switch_node` `vpn_route_test` |
 | `identity` | 8101 | WSL | 9 个模型身份/运行环境检测 |
+| `glmvision` | 8102 | WSL | `describe_image` 看图/OCR(智谱 GLM 视觉) |
+| `agy` | 8103 | WSL | `agy_ask`/`agy_quota` 等谷歌系重活外包通道 |
+| `ics-core` | 8104 | WSL | `list_messages` `read_message` `push_message` `push_file` `manage_message`(ICS 消息流,详见 [ics 项目](../ics/ics-mcp-server/README.md)) |
+| `local-model` | 8105 | WSL | `local_ask`(自动发现 lb 活模型)+ `local_vision` 本地看图; 真身 lb llama-server, 见 [模型台账](../../docs/model-registry/README.md) |
 | `md2pdf` | 8110 | WSL | `md_to_pdf`;另开 REST `POST /pdf`(将来公网端点) |
+| `printctl` | 8120 | WSL | 局域网打印机 `print_file` `scan_document` 等 |
+| `paper-hub` | 8121 | WSL | 物理纸张任务 `create_paper_task` 等 |
+| `phone-eye` | 8122 | WSL | agent 的手机之眼与之手:`phone_look`(视觉判读+UI树)/`phone_tap`/`phone_swipe`/`phone_type`/`phone_screenshot`; 真身已独立为 [phone-eye 仓](../../phone-eye), 本目录是舰队薄壳 |
+| `zcode-bridge` | 8123 | WSL | 把本机 zcode agent 当编码执行器(OAuth 1.5x 额度通道):`zcode_task`/`zcode_status`; 依赖 systemd 的 zcode-bridge(CDP 9222)+zcode-bridge-api(9230), 见 [桥手册](../../agent/zcode/quota-multiplier-research/bridge/bridge-usage.md) |
 
-> 范围:hua-mcp 只收**个人通用**工具。业务/项目耦合的企业级 MCP(如 `ics`)留在各自项目。
+> 范围:hua-mcp 以**个人通用**工具为主。项目耦合但多方共用的 MCP(如 `ics-core`)
+> 以舰队成员形态常驻,业务真身与文档留在各自项目。
+> 各 agent CLI(Claude/Codex/agy/dsh)如何接线舰队,见 **[CLIENTS.md](CLIENTS.md)**。
 
 ## 跑 / 自启(脚本都在仓库里)
 
@@ -71,7 +84,7 @@ uv pip compile requirements.txt -o requirements.lock   # 锁依赖(可复现)
 # list / validate / test [--live] / down / restart / status / logs [name]
 ```
 
-- **WSL 侧**:`./fleet.sh up` → `./fleet.sh autostart`(底层 PM2,详见 `PM2_MANUAL.md`)。开机自启已装好:systemd 单元 `pm2-bohea`(`pm2 startup` + `pm2 save` 生成),WSL 起来后自动 resurrect 全部 wsl MCP。
+- **WSL 侧**:`./fleet.sh up` → `./fleet.sh autostart`(底层 PM2,详见 `PM2_MANUAL.md`)。开机自启已装好:systemd 用户单元 `pm2-fleet.service`(`pm2 resurrect`),WSL 起来后自动 resurrect 全部 wsl MCP。
 - **Windows 侧**(os=win):Windows 上管理员跑一次 `win/install-autostart.ps1`(登录自启,跑 `\\wsl.localhost` 路径下各 MCP 的 `run.ps1`)。完全静默(无窗口),日志落在 `%LOCALAPPDATA%\hua-mcp\<name>\server.log`。
 - 跨边界靠 `.wslconfig` 的 `networkingMode=mirrored`(已开),两侧 Claude 用同一份 `gen_config.py` 输出。
 

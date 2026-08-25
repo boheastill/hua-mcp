@@ -13,7 +13,7 @@ npm install -g pm2
 
 进入项目根目录，用 `fleet.sh` 一键启动所有 WSL 侧 MCP（它扫描各 `wsl/<name>/mcp.json`，按 `mcp-<name>-<port>` 注册到 PM2，无需中心配置文件）：
 ```bash
-cd /home/bohea/code-workspace/hua-mcp
+cd /home/bohea/bh-workspace/infra/hua-mcp
 ./fleet.sh up          # 等价于对每个 wsl MCP 跑 pm2 start <dir>/run.sh
 ./fleet.sh status      # = pm2 ls
 ```
@@ -101,6 +101,8 @@ pm2 startup
 
 ## 6. 本机开机自启（已配置）
 
-本机已装 systemd 单元 `pm2-bohea`（`sudo env "PATH=$PATH:<nvm bin>" pm2 startup systemd -u bohea --hp /home/bohea` 生成，
-注意 `"PATH=..."` 必须带引号——WSL 的 PATH 里混有带空格的 Windows 路径）。改动进程列表后记得 `pm2 save`，
-否则重启后 resurrect 的还是旧快照。验证：`systemctl is-enabled pm2-bohea`。
+本机已装 systemd 用户单元 `pm2-fleet.service`（`ExecStart=pm2 resurrect`，PATH 带 nvm node；
+注意本机另有一个 `pm2.service` HOME 指向 agent 桥环境，与舰队无关，见 OPS_NOTES §七点五）。
+改动进程列表后记得 `pm2 save`，否则重启后 resurrect 的还是旧快照。
+验证：`systemctl --user is-enabled pm2-fleet`。
+在非常规 shell（agent 沙箱等 HOME 被改写的环境）里操作舰队要带 `PM2_HOME=/home/bohea/.pm2` 前缀。

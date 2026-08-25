@@ -7,7 +7,10 @@
 
 1. `cp -r _template wsl/<name>` —— **目录名 = mcp.json 的 name = 服务名**，三处一致
 2. 起名规则: 小写英文连字符, **`hb-<能力>` 前缀**做个人命名空间, 防与官方/他人 MCP 撞名(如 `hb-tts`); 端口沿用舰队规则 **wsl 8100+ / win 8001-8099**
-3. **必须带 `requirements.lock`** —— 从 `wsl/identity/requirements.lock` 复制或用 `uv pip compile requirements.txt -o requirements.lock` 生成。没有 lock 时 `mcp[cli]>=1.2.0` 会装到最新版 SDK, 其中 `mcp.server.fastmcp` 已挪走 → `ModuleNotFoundError` 起不来
+3. **必须带 `requirements.lock`** —— `fleet.sh new` 复制 `_template` 时会带上模板的
+   lock(已钉 `mcp==1.28.0`)。没有 lock 时 `mcp[cli]>=1.2.0` 会装到最新版 SDK, 其中
+   `mcp.server.fastmcp` 已挪走 → `ModuleNotFoundError` 起不来(2026-08-25 已给 _template
+   补 lock 并修复其 import 冒烟自败; 加了新依赖记得 `uv pip compile` 重生成)
 4. `./fleet.sh validate && ./fleet.sh up`
 5. **pm2 环境陷阱**: pm2 把启动 shell 的 PATH 存进 app。从缺 `~/.local/bin` 的 shell 启动 → `run.sh: uv: command not found` → crash loop。修复: 从带完整 PATH 的 shell 重建 app:
    ```bash
@@ -24,23 +27,16 @@
 - 客户端**不会**因为 -32600 自动重握手(重连只由传输层断连/配置变更触发)
 - 铁律: **`pm2 restart` 任何舰队 MCP 之后, 顺手重启所有客户端侧**:
   ```bash
-  systemctl --user restart dsh-web      # DSH harness
-  # Claude / Codex: 新开会话即可(工具列表是会话快照)
+  systemctl --user restart dsh       # DSH harness (单元名是 dsh, 不是 dsh-web)
+  # Claude / Codex / agy: 新开会话即可(工具列表是会话快照)
   ```
 
 ## 三、客户端接线位置与统一 URL
 
 统一地址 `http://localhost:<port>/mcp` (streamable-http; WSL2 mirrored 网络下 Windows 侧同用 `127.0.0.1` 直通)。
 
-| 客户端 | 配置文件 | 形状 |
-|--------|----------|------|
-| DSH harness | `deepseek-harness/packages/bundle/web-app/cordis.patch.yml` | `@deepseek-ai/dsh-mcp-client` 行, `transport: streamable-http` |
-| WSL Claude | `~/.claude.json` → `mcpServers` | `{"type":"http","url":"http://localhost:8103/mcp"}` |
-| Win Claude | `C:\Users\bohea\.claude.json` → `mcpServers` | 同上 |
-| Codex | `~/.codex/config.toml` | `[mcp_servers.agy]` + `url = "http://127.0.0.1:8103/mcp"` |
-| 本地 Qwen | 同上 | `[mcp_servers.local_model]` + `url = "http://127.0.0.1:8105/mcp"` |
-| agy 自身 | `~/.gemini/antigravity-cli/mcp_config.json` | (它的 MCP 客户端) |
-| 一键生成 | `python gen_config.py > fleet-mcp.json` | 扫全部 `*/*/mcp.json` |
+各客户端(Claude/Codex/agy/dsh)配置位置、写入命令、重同步清单与疑难速查,
+以 **[CLIENTS.md](CLIENTS.md)** 为权威(2026-08-25 全量接线后整理)。
 
 - **DSH 的 bundle patch 只在启动时加载**(不支持热加载)——任何改动后必须 `systemctl --user restart dsh-web`; profile 的 `cordis.patch.yml` 是热加载的, 但 MCP 行已统一收在 bundle patch
 - Claude / Codex 的工具列表是**会话启动时快照**——配完/改完要新开会话才生效
@@ -65,28 +61,54 @@ nohup bash -c 'sleep 35; systemctl --user restart dsh-web' >/tmp/dsh-restart.log
 - 额度: 无官方无头接口; 方案 = PTY 驱动 TUI 的 `/usage` 面板(见 `wsl/agy/server.py` 的 `_capture_usage_panel`: 自动确认信任 → 发 `/usage\r` → 抓屏解析)
 - 多轮协作: `agy_ask` 返回 `conversation_id`, 下次调用传 `conversation` 参数续聊(同一会话勿并发)
 
-## 六、本地模型 (8105) 现状与结论
+## 六、本地模型 (8105) — local-model v2 (2026-08-25 重写)
 
-- 当前唯一占用 8105 的成员是 `wsl/local-model`；旧的 `agy-sdk` 8105 记录已退休，不能再作为端口或客户端接线依据。
-- `local-model` 只调用官方 Ollama `qwen3.5:4b` / `qwen3.5:9b`，工具为无状态 `local_ask`，默认 4B。
-- WSL mirrored networking 下，WSL、Windows Claude 和 Windows 侧其他 MCP 客户端统一使用 `http://127.0.0.1:8105/mcp`；服务默认回环绑定。
-- 该服务重启后，Claude/Codex 需新开会话，DSH 需重启 web 服务，以重新建立 Streamable HTTP session。
+- 后端已从本机 ollama(11434, 已死)切到 **lb 台式机 llama-server**(OpenAI 兼容,
+  `LB_LLM_URL`, 默认 `http://192.168.31.71:8080/v1`)。
+- lb 单卡互斥(同时只跑一个模型 set); 工具启动/缓存期自动发现 `/v1/models` 活模型,
+  lb 上换模型(stop 旧 + start 新)**客户端零改动**。模型资产单一事实源:
+  `~/bh-workspace/docs/model-registry/README.md`。
+- 工具: `local_ask`(文本委托) + `local_vision`(本地看图, 需多模态 set 如 qwen3.8-27b)。
+- lb 不可达时工具返回带台账指引的错误(区分"主机关机/服务未起"与"在线但无模型")。
+- WSL mirrored networking 下客户端统一 `http://127.0.0.1:8105/mcp`; 服务默认回环绑定。
+- 该服务重启后, Claude/Codex 需新开会话, DSH 需重启 web 服务(§二铁律)。
 
 ## 七、委托决策指南 (已内建到各工具描述, 所有客户端可见)
 
 | 场景 | 用谁 | 理由 |
 |---|---|---|
 | 纯看图 / OCR / 截图识别 | `mcp__glmvision__describe_image` | 秒级、便宜、不走 agy 额度、不留会话; 429 自动降级免费档 |
-| 看图 + 深度推理 / 联网 / 多步操作 | `mcp__agy__agy_ask` (或 agy-sdk) | agy 自己看图并继续推理 |
+| 看图 + 深度推理 / 联网 / 多步操作 | `mcp__agy__agy_ask` | agy 自己看图并继续推理 |
 | 复杂推理 / 联网调研 / 重活 | `mcp__agy__agy_ask` | 主模型不够用时外包 |
 | 简单问答 / 主模型自己能答的 | **别调** | 省额度省时间 |
 | 批量任务前 | `mcp__agy__agy_quota` | 油表, 防中途耗尽 |
 | 多轮追问 | 传回上次的 `[会话ID]` 给 conversation | 同一会话续聊, 别另开 |
 
-这条决策已写进 wsl/glmvision、wsl/agy、wsl/agy-sdk 三个成员的
+这条决策已写进 wsl/glmvision、wsl/agy 两个成员的
 工具描述, Claude/Codex/harness 任何客户端看到的 schema 即含此指南。
+(历史: 已删除的 agy-sdk 也曾携带; 2026-08-25 清引用。)
 
-## 八、gemini-sub 桥 (订阅额度 OpenAI 兼容端点, 8120)
+## 七点五、PM2/systemd 常驻总图 (2026-08-25 整备定稿)
+
+常驻服务分两族, 互不隶属, 各有各的自启单元:
+
+| 族 | 单元 | 管什么 |
+|---|---|---|
+| **hua-mcp 舰队** | `pm2-fleet.service` → `~/.pm2` → 11 个 MCP | resurrect dump.pm2 (改进程列表后要 `pm2 save`) |
+| **zcode 桥** | `zcode-bridge.service`(CDP 9222 真身) + `zcode-bridge-api.service`(HTTP 9230) | 与 PM2 无关; 舰队入口是成员 `zcode-bridge:8123` |
+
+- **已退役**: 老 `pm2.service`(8/24 生成, 与 pm2-fleet 重复 resurrect 同一 dump, 且
+  `ExecStop=pm2 kill` 会在登出杀掉舰队守护进程)。已 disable + 单元文件改名
+  `pm2.service.disabled-bak` 留档。**不要再跑裸 `pm2 startup`** —— 会重新生成同名单元。
+- **agent 沙箱 HOME 陷阱仍在**: 非常规 shell(HOME 被改写, 如 zcode 桥 bridge-home)里
+  裸跑 `pm2 ls` 会连到/新建**错误的 daemon**(空表误判"舰队掉了", `fleet.sh up` 还会
+  在占用端口重复起进程)。铁律: 前缀 `PM2_HOME=/home/bohea/.pm2 pm2 ...`。
+
+## 八、gemini-sub 桥 (订阅额度 OpenAI 兼容端点) — **已停用, 端口已让渡**
+
+> ⚠️ 2026-08-25 状态: 该桥不在 pm2 里(未运行)。**8120 已划给 printctl**,
+> `wsl/gemini-sub/run.sh` 若原样重启会端口冲突。复活时先改端口(如 8124)+
+> 同步 `~/.dsh/settings.yaml` 的 gemini-sub provider + 本节。以下为历史档案。
 
 - 位置: `wsl/gemini-sub/` (run.sh + .venv), pm2 托管 `gemini-sub-8120`, 非 MCP。
 - 底层: `antigravity-auth` 库 (opencode 方案的 Python 移植) — 自己实现 OAuth + 内部 Cloud Code API,
@@ -157,3 +179,10 @@ Headers: Authorization Bearer <token>, User-Agent antigravity/1.1.13 windows/amd
 Body: {"metadata": {"ideType": "ANTIGRAVITY"}}
 → response.cloudaicompanionProject
 ```
+
+## 十一、故障档 · mcp__agy__agy_ask 超时 (2026-08-25)
+
+dsh 会话调 agy MCP 立即 `MCP error -32001 timeout`, 同期 agy CLI 本体两轮联网调研全成功
+(旁证: agy CLI 作为 client 连自己也 5 分钟握手不上 → 问题在 agy server 端)。
+完整时间线/排查单/CLI 替代姿势: `docs/incident-agy-mcp-timeout-20260825.md`。
+临时替代 = CLI 后台跑 (`agy --effort medium --print-timeout 10m --output-format text --print='...'`)。
