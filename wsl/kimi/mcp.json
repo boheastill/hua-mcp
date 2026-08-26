@@ -1,0 +1,7 @@
+{
+  "name": "kimi",
+  "port": 8125,
+  "os": "wsl",
+  "public": false,
+  "desc": "Kimi Code 订阅 (Moonshot K3, api.kimi.com/coding) API 门面: kimi_ask 文本委托 (K3 1M 上下文/三档 effort), kimi_vision 看图。密钥 KIMI_API_KEY env 或 ~/.kimi/key.txt。"
+}

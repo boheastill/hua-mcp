@@ -67,6 +67,7 @@ uv pip compile requirements.txt -o requirements.lock   # 锁依赖(可复现)
 | `printctl` | 8120 | WSL | 局域网打印机 `print_file` `scan_document` 等 |
 | `paper-hub` | 8121 | WSL | 物理纸张任务 `create_paper_task` 等 |
 | `phone-eye` | 8122 | WSL | agent 的手机之眼与之手:`phone_look`(视觉判读+UI树)/`phone_tap`/`phone_swipe`/`phone_type`/`phone_screenshot`; 真身已独立为 [phone-eye 仓](../../phone-eye), 本目录是舰队薄壳 |
+| `kimi` | 8125 | WSL | Kimi Code 订阅 (Moonshot K3) API 门面:`kimi_ask`(文本委托, K3 1M 上下文, effort low/high/max)/`kimi_vision`(看图兜底); 密钥 `~/.kimi/key.txt`, 与 dsh 路由 kimi/k3 同一订阅池 |
 
 > 范围:hua-mcp 以**个人通用**工具为主。项目耦合但多方共用的 MCP(如 `ics-core`)
 > 以舰队成员形态常驻,业务真身与文档留在各自项目。

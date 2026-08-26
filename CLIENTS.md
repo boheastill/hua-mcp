@@ -38,7 +38,9 @@ cd /home/bohea/bh-workspace/infra/hua-mcp && python3 gen_config.py
 
 vpn:8001(Win) · identity:8101 · glmvision:8102 · agy:8103 · **ics-core:8104** ·
 local-model:8105 · md2pdf:8110 · printctl:8120 · paper-hub:8121 · **phone-eye:8122**
-(公开项目 github.com/boheastill/phone-eye, 舰队壳 wsl/phone-eye 复用其 server.py)
+(公开项目 github.com/boheastill/phone-eye, 舰队壳 wsl/phone-eye 复用其 server.py) ·
+**kimi:8125**(Kimi Code 订阅 K3 门面: `kimi_ask` 文本委托/`kimi_vision` 看图;
+密钥 `~/.kimi/key.txt`, 同一把 Key 亦是 dsh 原生路由 kimi/k3; 总笔记 ~/agent/kimi/README.md)
 
 > 历史注:曾有成员 zcode-bridge:8123(2026-08-25 加入, 2026-08-26 因上游项目严重 bug
 > 整体拆除, 港位让渡)。桥接 agent 当执行器的**技术经验**见 OPS_NOTES §七点五(HOME 陷阱)

@@ -114,6 +114,7 @@ edited**.
 | `printctl` | 8120 | WSL | LAN printer control: print/scan/status discovery |
 | `paper-hub` | 8121 | WSL | Physical paper tasks: `create_paper_task` etc. |
 | `phone-eye` | 8122 | WSL | Agent eyes and hands on a real phone: `phone_look` (vision Q&A + UI tree), `phone_tap/swipe/type`, `phone_screenshot` — over Wi-Fi adb. Core lives in its own distributable repo; this is the fleet wrapper |
+| `kimi` | 8125 | WSL | Moonshot Kimi Code subscription facade: `kimi_ask` (text delegation, K3 1M ctx, effort low/high/max) / `kimi_vision` (image fallback). Key at `~/.kimi/key.txt`; same subscription pool as dsh route kimi/k3 |
 
 How each agent CLI (Claude Code / Codex / agy / dsh) wires up to the fleet —
 see **[CLIENTS.md](CLIENTS.md)**.
