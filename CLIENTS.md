@@ -96,9 +96,9 @@ dsh --profile <p> --dump-config | grep -c dsh-mcp-client   # 应等于当前成�
 |---|---|---|
 | 工具在但调用报 `Session not found (-32600)` | 舰队服务端重启过,客户端会话作废(OPS_NOTES §二铁律) | 重启 dsh 进程;Claude/Codex/agy 新开会话 |
 | dsh 启动报 `patch: entry "mcp-x" not found` | patch 行带了 id 当新增用 | 改成无 id 的 `- insert:` 列表(见 §3) |
-| dsh 工具列表没有 mcp__* | 正在跑的进程早于 patch 写入 / 插件未装 | 重启该 profile;确认 `dsh plugin ls` 里有 dsh-mcp-client |
+| dsh 工具列表没有 mcp__* | 正在跑的进程早于 patch 写入 / 插件未装 / **舰队 DOWN 时进程启动**(2026-08-26 实锤: mcp-client 连接 ECONNREFUSED 时**静默不注册**, stderr 无任何输出) | 先 `./fleet.sh health` 确认舰队在线; 修好后**重启该 dsh profile**(插件只在启动时连接); 确认 `dsh plugin ls` 里有 dsh-mcp-client |
 | codex `mcp list` 显示 Auth: Unsupported | OAuth 发现标记,本地舰队无需鉴权 | 忽略,正常 |
 | 某成员 health 不通 | PM2 挂了 / 端口变更 | `./fleet.sh health` → `./fleet.sh restart <name>` |
 | agent 沙箱里 `pm2 ls` 空表, 但 health 全绿 | HOME/PM2_HOME 被沙箱改写, 连到别的 daemon(OPS_NOTES §七点五) | 前缀 `PM2_HOME=/home/bohea/.pm2 pm2 ...` |
 | ics-core 调用 401 | 服务端 token 轮换 | 改 `~/.ics/token`(600 权限, 不进 git)或设 `ICS_TOKEN` env → `PM2_HOME=/home/bohea/.pm2 pm2 restart mcp-ics-core-8104`(见 ics-mcp-server/README.md) |
-| pm2 daemon 重建后 `pm2 ls` 空表(进程全丢) | daemon 重启不会自动 resurrect, 只有开机 pm2-fleet 会 | `cd hua-mcp && PM2_HOME=~/.pm2 ./fleet.sh up` + `pm2 save`(2026-08-26 实例) |
+| pm2 daemon 重建后 `pm2 ls` 空表(进程全丢) | **cgroup 陷阱**(2026-08-26 实锤): 从 dsh 会话里跑 `fleet.sh up`/`pm2` 命令, daemon 作为其子孙进程挂在 `dsh.service` cgroup 下, dsh 一重启 systemd 杀整树=舰队全体陪葬(02:05 与 14:57 两次"神秘掉 fleet"同根因); 之后任何 `pm2 ls` 又自动拉起空 daemon(不 resurrect), 且仍在同一陷阱里 | 恢复+归位一条龙: `pm2 kill` → `pkill -f 'God Daem[o]n'`(防 pm2 kill 自己再拉一个; 括号防 pkill 自匹配) → `systemctl --user restart pm2-fleet.service`(oneshot 已 active 时 `start` 是空操作, **必须 restart**) → 验证 `ps -o cgroup -p $(pgrep -f 'God Daem[o]n')` 显示 `pm2-fleet.service`。**铁律: 舰队常驻操作只走 systemctl; 不要从 agent 会话里 `fleet.sh up` 起常驻** |

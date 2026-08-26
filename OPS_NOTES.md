@@ -106,8 +106,15 @@ nohup bash -c 'sleep 35; systemctl --user restart dsh-web' >/tmp/dsh-restart.log
 - **agent 沙箱 HOME 陷阱仍在**: 非常规 shell(HOME 被改写, 如当年 zcode 桥的 bridge-home)里
   裸跑 `pm2 ls` 会连到/新建**错误的 daemon**(空表误判"舰队掉了", `fleet.sh up` 还会
   在占用端口重复起进程)。铁律: 前缀 `PM2_HOME=/home/bohea/.pm2 pm2 ...`。
-  变体(2026-08-26 实例): daemon 本体重建(如 02:05 无 resurrect)也会空表——
-  `fleet.sh up` + `pm2 save` 即恢复, 勿手起单进程。
+  变体(2026-08-26 实锤, 比空表更凶): **cgroup 陷阱**——从 dsh 会话里跑 `fleet.sh up`/`pm2`,
+  daemon 作为子孙进程挂进 `dsh.service` cgroup, dsh 重启时 systemd 杀整树=舰队全体陪葬
+  (当日 02:05、14:57 两次"神秘掉 fleet"同根因), 且事后任何 `pm2 ls` 又自动拉起空 daemon
+  (不 resurrect)仍困在陷阱里。正解: `pm2 kill` → `pkill -f 'God Daem[o]n'`(防 pm2 kill
+  自己再拉一个; 括号防 pkill 自匹配) → `systemctl --user restart pm2-fleet.service`
+  (oneshot 已 active 时 start 是空操作, 必须 restart) → 验证 daemon cgroup=pm2-fleet.service。
+  **铁律升级: 舰队常驻只走 systemctl; agent 会话里起的 pm2 daemon 都是临时货。**
+  连锁坑: 舰队 DOWN 时 dsh 启动, mcp-client 插件连接 ECONNREFUSED **静默不注册工具**
+  (stderr 零输出)——修好舰队后必须重启 dsh profile, 工具才会回来。
 
 ## 八、gemini-sub 桥 (订阅额度 OpenAI 兼容端点) — **已停用, 端口已让渡**
 
