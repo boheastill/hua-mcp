@@ -67,7 +67,6 @@ uv pip compile requirements.txt -o requirements.lock   # 锁依赖(可复现)
 | `printctl` | 8120 | WSL | 局域网打印机 `print_file` `scan_document` 等 |
 | `paper-hub` | 8121 | WSL | 物理纸张任务 `create_paper_task` 等 |
 | `phone-eye` | 8122 | WSL | agent 的手机之眼与之手:`phone_look`(视觉判读+UI树)/`phone_tap`/`phone_swipe`/`phone_type`/`phone_screenshot`; 真身已独立为 [phone-eye 仓](../../phone-eye), 本目录是舰队薄壳 |
-| `zcode-bridge` | 8123 | WSL | 把本机 zcode agent 当编码执行器(OAuth 1.5x 额度通道):`zcode_task`/`zcode_status`; 依赖 systemd 的 zcode-bridge(CDP 9222)+zcode-bridge-api(9230), 见 [桥手册](../../agent/zcode/quota-multiplier-research/bridge/bridge-usage.md) |
 
 > 范围:hua-mcp 以**个人通用**工具为主。项目耦合但多方共用的 MCP(如 `ics-core`)
 > 以舰队成员形态常驻,业务真身与文档留在各自项目。

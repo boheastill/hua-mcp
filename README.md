@@ -114,7 +114,6 @@ edited**.
 | `printctl` | 8120 | WSL | LAN printer control: print/scan/status discovery |
 | `paper-hub` | 8121 | WSL | Physical paper tasks: `create_paper_task` etc. |
 | `phone-eye` | 8122 | WSL | Agent eyes and hands on a real phone: `phone_look` (vision Q&A + UI tree), `phone_tap/swipe/type`, `phone_screenshot` — over Wi-Fi adb. Core lives in its own distributable repo; this is the fleet wrapper |
-| `zcode-bridge` | 8123 | WSL | Drive the local zcode agent as a coding executor (OAuth 1.5x quota channel): `zcode_task` / `zcode_status`. Depends on the systemd-hosted bridge (CDP 9222 + HTTP API 9230) |
 
 How each agent CLI (Claude Code / Codex / agy / dsh) wires up to the fleet —
 see **[CLIENTS.md](CLIENTS.md)**.

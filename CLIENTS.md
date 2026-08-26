@@ -38,8 +38,11 @@ cd /home/bohea/bh-workspace/infra/hua-mcp && python3 gen_config.py
 
 vpn:8001(Win) · identity:8101 · glmvision:8102 · agy:8103 · **ics-core:8104** ·
 local-model:8105 · md2pdf:8110 · printctl:8120 · paper-hub:8121 · **phone-eye:8122**
-(公开项目 github.com/boheastill/phone-eye, 舰队壳 wsl/phone-eye 复用其 server.py) ·
-**zcode-bridge:8123**(重活委托进 zcode 的 1.5x 额度通道, 见文末追加节)
+(公开项目 github.com/boheastill/phone-eye, 舰队壳 wsl/phone-eye 复用其 server.py)
+
+> 历史注:曾有成员 zcode-bridge:8123(2026-08-25 加入, 2026-08-26 因上游项目严重 bug
+> 整体拆除, 港位让渡)。桥接 agent 当执行器的**技术经验**见 OPS_NOTES §七点五(HOME 陷阱)
+> 与旧提交 a56efb9; 业务不再回舰队。
 
 ## 3. dsh 专属:插件接线法
 
@@ -96,10 +99,4 @@ dsh --profile <p> --dump-config | grep -c dsh-mcp-client   # 应等于当前成�
 | 某成员 health 不通 | PM2 挂了 / 端口变更 | `./fleet.sh health` → `./fleet.sh restart <name>` |
 | agent 沙箱里 `pm2 ls` 空表, 但 health 全绿 | HOME/PM2_HOME 被沙箱改写, 连到别的 daemon(OPS_NOTES §七点五) | 前缀 `PM2_HOME=/home/bohea/.pm2 pm2 ...` |
 | ics-core 调用 401 | 服务端 token 轮换 | 改 `~/.ics/token`(600 权限, 不进 git)或设 `ICS_TOKEN` env → `PM2_HOME=/home/bohea/.pm2 pm2 restart mcp-ics-core-8104`(见 ics-mcp-server/README.md) |
-
-## 2026-08-25 追加: zcode-bridge (8123)
-
-- 工具: `zcode_task`(一次调用=派活+阻塞等结果, 重编码活专用, GLM-5.3 OAuth 1.5x 通道) / `zcode_status`
-- 已接线: dsh web+headless profiles / claude.json / codex config.toml / gemini mcp_config.json (gen_config.py 已重跑)
-- **各客户端需重启一次加载**; 依赖链: mcp(8123) → bridge-api(9230, systemd) → zcode(9222, systemd `zcode-bridge.service`)
-- 排障从底层往上: `systemctl --user status zcode-bridge zcode-bridge-api` → `curl 127.0.0.1:9230/health` → `curl 127.0.0.1:8123/health`
+| pm2 daemon 重建后 `pm2 ls` 空表(进程全丢) | daemon 重启不会自动 resurrect, 只有开机 pm2-fleet 会 | `cd hua-mcp && PM2_HOME=~/.pm2 ./fleet.sh up` + `pm2 save`(2026-08-26 实例) |

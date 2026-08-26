@@ -94,15 +94,20 @@ nohup bash -c 'sleep 35; systemctl --user restart dsh-web' >/tmp/dsh-restart.log
 
 | 族 | 单元 | 管什么 |
 |---|---|---|
-| **hua-mcp 舰队** | `pm2-fleet.service` → `~/.pm2` → 11 个 MCP | resurrect dump.pm2 (改进程列表后要 `pm2 save`) |
-| **zcode 桥** | `zcode-bridge.service`(CDP 9222 真身) + `zcode-bridge-api.service`(HTTP 9230) | 与 PM2 无关; 舰队入口是成员 `zcode-bridge:8123` |
+| **hua-mcp 舰队** | `pm2-fleet.service` → `~/.pm2` → 各 MCP | resurrect dump.pm2 (改进程列表后要 `pm2 save`) |
 
 - **已退役**: 老 `pm2.service`(8/24 生成, 与 pm2-fleet 重复 resurrect 同一 dump, 且
   `ExecStop=pm2 kill` 会在登出杀掉舰队守护进程)。已 disable + 单元文件改名
   `pm2.service.disabled-bak` 留档。**不要再跑裸 `pm2 startup`** —— 会重新生成同名单元。
-- **agent 沙箱 HOME 陷阱仍在**: 非常规 shell(HOME 被改写, 如 zcode 桥 bridge-home)里
+- **已拆除(2026-08-26)**: zcode 桥一族(`zcode-bridge.service` CDP 9222 +
+  `zcode-bridge-api.service` HTTP 9230 + 舰队成员 `zcode-bridge:8123`)——上游项目有
+  严重 bug, 整体拆除, 单元文件已删, 港位 8123 让渡。技术经验保留: 旧提交 a56efb9,
+  以及下面这条 HOME 陷阱(当年就是它踩出来的)。
+- **agent 沙箱 HOME 陷阱仍在**: 非常规 shell(HOME 被改写, 如当年 zcode 桥的 bridge-home)里
   裸跑 `pm2 ls` 会连到/新建**错误的 daemon**(空表误判"舰队掉了", `fleet.sh up` 还会
   在占用端口重复起进程)。铁律: 前缀 `PM2_HOME=/home/bohea/.pm2 pm2 ...`。
+  变体(2026-08-26 实例): daemon 本体重建(如 02:05 无 resurrect)也会空表——
+  `fleet.sh up` + `pm2 save` 即恢复, 勿手起单进程。
 
 ## 八、gemini-sub 桥 (订阅额度 OpenAI 兼容端点) — **已停用, 端口已让渡**
 
