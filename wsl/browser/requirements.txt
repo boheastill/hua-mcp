@@ -1,0 +1,2 @@
+# npm-native member: runtime is node (npx @playwright/mcp, see run.sh) — no python deps.
+# This file exists only to satisfy the fleet contract (fleet.sh validate/test).

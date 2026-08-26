@@ -1,0 +1,8 @@
+{
+  "name": "browser",
+  "port": 8108,
+  "os": "wsl",
+  "public": false,
+  "heavy": true,
+  "desc": "Playwright MCP(微软官方)常驻 — 全端浏览器自动化: browser_navigate/snapshot/click/type 等, headless chromium。ZCode 的 browser-use 之外, 给 Claude/Codex/agy/dsh 补上浏览器之手。"
+}

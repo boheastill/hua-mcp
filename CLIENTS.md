@@ -42,7 +42,8 @@ cd /home/bohea/bh-workspace/infra/hua-mcp && python3 gen_config.py
 
 vpn:8001(Win) · **glm-search:8100**(套餐联网搜索中继) · identity:8101 · glmvision:8102 · agy:8103 · **ics-core:8104** ·
 local-model:8105 · **glm-reader:8106**(套餐网页读取中继) · **glm-repo:8107**(套餐开源仓库 zread 中继) ·
-md2pdf:8110 · printctl:8120 · paper-hub:8121 · **phone-eye:8122**
+**browser:8108**(Playwright 常驻, npm 原生成员) · **context7:8109**(Context7 免费文档中继) ·
+md2pdf:8110 · **db-browser:8111**(SQLite/Postgres 查询) · printctl:8120 · paper-hub:8121 · **phone-eye:8122**
 (公开项目 github.com/boheastill/phone-eye, 舰队壳 wsl/phone-eye 复用其 server.py) ·
 **kimi:8125**(Kimi Code 订阅 K3 门面: `kimi_ask` 文本委托/`kimi_vision` 看图;
 密钥 `~/.kimi/key.txt`, 同一把 Key 亦是 dsh 原生路由 kimi/k3; 总笔记 ~/agent/kimi/README.md)

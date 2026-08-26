@@ -66,7 +66,10 @@ uv pip compile requirements.txt -o requirements.lock   # 锁依赖(可复现)
 | `local-model` | 8105 | WSL | `local_ask`(自动发现 lb 活模型)+ `local_vision` 本地看图; 真身 lb llama-server, 见 [模型台账](../../docs/model-registry/README.md) |
 | `glm-reader` | 8106 | WSL | 智谱套餐「网页读取」中继:`webReader`(URL 转结构化正文/元数据, ×1.2积分) |
 | `glm-repo` | 8107 | WSL | 智谱套餐「开源仓库」zread 中继:`search_doc`/`get_repo_structure`/`read_file` 吃透公开 GitHub 仓库(×1.2积分) |
+| `browser` | 8108 | WSL | Playwright MCP(微软官方)常驻, npm 原生成员:`browser_navigate/snapshot/click/type...` 全端浏览器自动化(headless chromium); 无 /health, fleet.sh health 走 /mcp 兜底探活 |
+| `context7` | 8109 | WSL | Context7 中继(免费远程, 免鉴权):`resolve-library-id`/`query-docs` 按版本拉最新库文档, 补 GLM/DeepSeek 新版 API 盲区 |
 | `md2pdf` | 8110 | WSL | `md_to_pdf`;另开 REST `POST /pdf`(将来公网端点) |
+| `db-browser` | 8111 | WSL | SQLite/Postgres 查询通道:`sqlite_query/schema`(任意 .db, URI mode=ro 引擎级只读)+`pg_query/schema`(dsn 或 PG_DSN); 写入需显式 write=True |
 | `printctl` | 8120 | WSL | 局域网打印机 `print_file` `scan_document` 等 |
 | `paper-hub` | 8121 | WSL | 物理纸张任务 `create_paper_task` 等 |
 | `phone-eye` | 8122 | WSL | agent 的手机之眼与之手:`phone_look`(视觉判读+UI树)/`phone_tap`/`phone_swipe`/`phone_type`/`phone_screenshot`; 真身已独立为 [phone-eye 仓](../../phone-eye), 本目录是舰队薄壳 |

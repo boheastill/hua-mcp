@@ -140,7 +140,16 @@ $dirs"
       if curl -fsS --max-time 4 "http://localhost:$port/health" >/dev/null 2>&1; then
         echo "  ✓ $name :$port ($os)  $(curl -fsS http://localhost:$port/health)"
       else
-        echo "  ✗ $name :$port ($os)  DOWN$([ "$os" = win ] && echo ' (runs on Windows host)')"
+        # npm-native members (e.g. browser) have no /health route: probe /mcp with
+        # an MCP initialize instead — any HTTP answer < 5xx means the server is alive.
+        code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 -X POST "http://localhost:$port/mcp" \
+          -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+          -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"fleet-health","version":"0"}}}') || code=000
+        if [ "${code:-000}" -ge 200 ] 2>/dev/null && [ "${code:-000}" -lt 500 ] 2>/dev/null; then
+          echo "  ✓ $name :$port ($os)  alive via /mcp initialize (no /health endpoint)"
+        else
+          echo "  ✗ $name :$port ($os)  DOWN$([ "$os" = win ] && echo ' (runs on Windows host)')"
+        fi
       fi
     done
     ;;

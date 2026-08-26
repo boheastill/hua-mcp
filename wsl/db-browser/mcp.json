@@ -1,0 +1,7 @@
+{
+  "name": "db-browser",
+  "port": 8111,
+  "os": "wsl",
+  "public": false,
+  "desc": "SQLite/Postgres 查询通道: sqlite_query/schema(任意 .db 文件, URI mode=ro 引擎级只读)+pg_query/schema(PG_DSN 或 dsn 参数, 会话级只读); 写入需显式 write=True。"
+}

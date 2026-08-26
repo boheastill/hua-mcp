@@ -140,12 +140,14 @@ def relay(
     upstream: str,
     auth_env: str = "GLM_API_KEY",
     key_paths: tuple[str, ...] = ("~/.glm/key.txt",),
+    auth_required: bool = True,
 ):
     """Starlette app: local ``/health`` + ``/mcp`` transparently relayed to a
     remote streamable-http MCP. POST/GET/DELETE are forwarded with the session
-    headers and an injected ``Authorization: Bearer <key>``. No MCP protocol
-    handling happens here — bytes pass through, upstream tools surface as-is
-    (upstream errors like 401 quota pass through too, unmasked)."""
+    headers and an injected ``Authorization: Bearer <key>`` (when a key is
+    found; free upstreams pass ``auth_required=False`` to skip auth entirely).
+    No MCP protocol handling happens here — bytes pass through, upstream tools
+    surface as-is (upstream errors like 401 quota pass through too, unmasked)."""
     import httpx
     from starlette.applications import Starlette
     from starlette.background import BackgroundTask
@@ -167,19 +169,21 @@ def relay(
                 "os": meta.get("os"),
                 "port": int(os.environ.get("HUAMCP_PORT", meta["port"])),
                 "upstream": upstream,
+                "auth_required": auth_required,
                 "key_ok": bool(_bearer_key(auth_env, key_paths)),
             }
         )
 
     async def _proxy(request: Request) -> Response:  # noqa: ANN001
         key = _bearer_key(auth_env, key_paths)
-        if not key:
+        if not key and auth_required:
             return JSONResponse(
                 {"detail": f"upstream key missing: set {auth_env} or write {key_paths[0]}"},
                 status_code=503,
             )
         headers = {k: v for k, v in request.headers.items() if k.lower() in FWD_REQ}
-        headers["authorization"] = f"Bearer {key}"
+        if key:
+            headers["authorization"] = f"Bearer {key}"
         url = upstream + (f"?{request.url.query}" if request.url.query else "")
         # GET opens the (possibly long-idle) server->client stream: no read timeout there
         timeout = httpx.Timeout(

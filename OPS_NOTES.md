@@ -82,6 +82,9 @@ nohup bash -c 'sleep 35; systemctl --user restart dsh-web' >/tmp/dsh-restart.log
 | 联网查资料 / 搜最新信息 | `mcp__glm-search__web_search_prime` | 套餐搜索 ×1.2积分/次, 比 agy 便宜直接; 搜完要深读推理再交 agy |
 | 读具体网页 / 抓正文 | `mcp__glm-reader__webReader` | 主模型无浏览器时的读页通道(×1.2积分/次) |
 | 吃透一个公开 GitHub 仓库 | `mcp__glm-repo__search_doc` 等 | zread 文档/结构/文件三件套, 先于 clone 通读(×1.2积分/次) |
+| 浏览网页/操作网页(非 ZCode 客户端) | `mcp__browser__browser_navigate` 等 | Playwright 常驻, 全端浏览器自动化; ZCode 自己优先用内置 browser-use |
+| 查新版库的准确 API/用法 | `mcp__context7__query-docs` | 免费按版本拉最新文档, 压 GLM/DeepSeek 的版本幻觉; 先 resolve-library-id 拿 ID |
+| 查 SQLite/Postgres 数据 | `mcp__db-browser__sqlite_query` 等 | 引擎级只读优先, 写库显式 write=true; 拿到陌生 .db 先 sqlite_schema |
 | 复杂推理 / 联网调研 / 重活 | `mcp__agy__agy_ask` | 主模型不够用时外包 |
 | 简单问答 / 主模型自己能答的 | **别调** | 省额度省时间 |
 | 批量任务前 | `mcp__agy__agy_quota` | 油表, 防中途耗尽 |
@@ -227,3 +230,31 @@ dsh 会话调 agy MCP 立即 `MCP error -32001 timeout`, 同期 agy CLI 本体�
 - **huamcp.relay 实现注意**: hop-by-hop 头(content-length/content-encoding 等)不过河;
   GET 长连流不设 read 超时; 上游 401/限流**原样透传**不掩盖; key 每请求重读, 换 key 免重启;
   /health 额外带 `upstream` 与 `key_ok` 字段可快速排障。
+
+## 十三、生产力三件套 browser/context7/db-browser (2026-08-27 接入)
+
+调研 2026-08 MCP 生态后补的三个缺口(Playwright 是全球用量第一), 全部实测通过:
+
+- **browser:8108 — npm 原生成员(舰队第三种形态)**: run.sh 直接常驻
+  `npx -y @playwright/mcp@latest --host 127.0.0.1 --port 8108 --browser chromium --headless`,
+  server.py 只留契约占位(不声明工具), requirements.txt 仅注释。要点:
+  - 启动前 `npx -p @playwright/mcp playwright install chromium` 兜底装浏览器(缓存于
+    `~/.cache/ms-playwright`, 已预装 113MB headless-shell 152); pm2 重启秒起。
+  - mcp.json 标 `heavy: true`(pm2 1G 档)。chromium 常驻 ~130MB。
+  - **它没有 /health 端点** → `fleet.sh health` 已加兜底: /health 不通时改 POST /mcp
+    initialize, 任何 <5xx 的 HTTP 应答即视为存活(输出注明 "alive via /mcp")。
+  - **set -e 陷阱(实锤)**: health 的 `code=$(curl ...)` 对 DOWN 端口返回非零, 赋值失败
+    直接杀死整个脚本(fleet health 静默无输出, exit 7)——已修(`|| code=000`)。
+    在 fleet.sh 里新增任何裸 `$(curl/命令替换)` 都要带 `|| 兜底`。
+- **context7:8109 — 免鉴权中继**: `huamcp.relay(..., auth_required=False)`(relay 新增
+  可选鉴权参数); 上游 Context7 4.0.3 工具名已改: `resolve-library-id` + `query-docs`
+  (网上旧文档的 get-library-docs 已废弃)。上游是 **stateless MCP**(initialize 不返回
+  mcp-session-id 头), 中继透传无碍; 免费档有速率限制, 提速可配 CONTEXT7_API_KEY
+  (env 或 ~/.context7/key.txt, 中继自动带上)。
+- **db-browser:8111 — 自研门面**: sqlite_query/sqlite_schema + pg_query/pg_schema。
+  - 安全模式: SQLite 默认 URI `mode=ro`(**引擎级**只读, 写语句报
+    "attempt to write a readonly database", 已实测); PG 默认会话
+    `default_transaction_read_only=on`。写库必须显式 `write=true`(自动 commit)。
+  - PG 连接: `dsn` 参数或环境变量 `PG_DSN`(pm2 进程加 env 后要 restart
+    mcp-db-browser-8111); 无 DSN 时工具返回指引而非报错崩溃。
+  - 结果防失控: 默认 max_rows=50 截断, 单元格 500 字符截断。

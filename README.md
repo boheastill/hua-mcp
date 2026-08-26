@@ -114,7 +114,10 @@ edited**.
 | `local-model` | 8105 | WSL | `local_ask` + `local_vision` — local LLM delegation via the lb desktop's llama-server (OpenAI-compatible; auto-discovers the live model, see the model registry) |
 | `glm-reader` | 8106 | WSL | Relay to BigModel's plan-only web-reader MCP: `webReader` (URL → structured content, ×1.2 credits) |
 | `glm-repo` | 8107 | WSL | Relay to BigModel's zread MCP: `search_doc` / `get_repo_structure` / `read_file` for digesting public GitHub repos (×1.2 credits) |
+| `browser` | 8108 | WSL | Resident Microsoft Playwright MCP (npm-native member): `browser_navigate/snapshot/click/type...` fleet-wide browser automation on headless chromium; no /health — fleet.sh health probes /mcp instead |
+| `context7` | 8109 | WSL | Relay to Context7 (free remote, no auth): `resolve-library-id` / `query-docs` — version-pinned up-to-date library docs, patching GLM/DeepSeek blind spots on new API versions |
 | `md2pdf` | 8110 | WSL | Markdown → PDF, fully offline: mermaid blocks pre-rendered to inline base64 SVG by a locally installed `mmdc` (no network, no `npx` cold start), CJK-safe fonts pinned by Nix. Exposed both as an MCP tool and as `POST /pdf` |
+| `db-browser` | 8111 | WSL | SQLite/Postgres query channel: `sqlite_query/schema` (any .db file, URI mode=ro engine-level read-only) + `pg_query/schema` (dsn arg or PG_DSN env, session-level read-only); writes need explicit write=True |
 | `printctl` | 8120 | WSL | LAN printer control: print/scan/status discovery |
 | `paper-hub` | 8121 | WSL | Physical paper tasks: `create_paper_task` etc. |
 | `phone-eye` | 8122 | WSL | Agent eyes and hands on a real phone: `phone_look` (vision Q&A + UI tree), `phone_tap/swipe/type`, `phone_screenshot` — over Wi-Fi adb. Core lives in its own distributable repo; this is the fleet wrapper |
