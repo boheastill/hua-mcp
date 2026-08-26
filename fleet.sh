@@ -17,8 +17,9 @@
 #   ./fleet.sh autostart   persist PM2 + print the boot-survival command
 #   ./fleet.sh new <wsl|win> <name>   scaffold a new MCP (auto-assigns a free port)
 #   ./fleet.sh install-claude         register every MCP into Claude Code (user scope)
+#   ./fleet.sh install-clients        register every MCP into ALL clients (Claude/Codex/agy/dsh/ZCode) — idempotent
 #   ./fleet.sh install-hooks          enable the git pre-commit guardrail (hooks/)
-#   ./fleet.sh sync                    up + pm2 save + register-with-Claude + health (make ALL wsl MCPs live)
+#   ./fleet.sh sync                   up + pm2 save + install-clients + health (make ALL wsl MCPs live everywhere)
 set -euo pipefail
 cd "$(dirname "$0")"
 PY=python3
@@ -186,12 +187,118 @@ PY
     echo "✓ git hooks enabled (core.hooksPath=hooks). pre-commit now runs ./fleet.sh validate."
     ;;
 
+  install-clients)
+    # One command to refresh every client's fleet wiring. Idempotent — safe to
+    # re-run after adding/removing members or changing ports.
+    #   Claude  ~/.claude.json                    (remove+add per member)
+    #   Codex   ~/.codex/config.toml              (remove+add per member)
+    #   agy     ~/.gemini/config/mcp_config.json  (add = add-or-update)
+    #   dsh     ~/.dsh/profiles/*/cordis.patch.yml (dsh-mcp-client block fully
+    #           regenerated -> stale fleet entries cleaned; other patches/comments kept)
+    #   ZCode   ~/.zcode/cli/config.json mcp.servers (add/update by name only)
+    echo "== Claude Code =="
+    "$0" install-claude
+    echo "== Codex =="
+    if command -v codex >/dev/null 2>&1; then
+      _mcps | while read -r name port os dir heavy; do
+        codex mcp remove "$name" >/dev/null 2>&1 || true
+        codex mcp add --url "http://localhost:$port/mcp" "$name" >/dev/null 2>&1 \
+          && echo "  + $name -> :$port" || echo "  ✗ $name (codex add failed)"
+      done
+    else
+      echo "  (codex not on PATH, skip)"
+    fi
+    echo "== agy =="
+    if command -v agy >/dev/null 2>&1; then
+      _mcps | while read -r name port os dir heavy; do
+        agy mcp add "$name" "http://localhost:$port/mcp" >/dev/null 2>&1 \
+          && echo "  + $name -> :$port" || echo "  ✗ $name (agy add failed)"
+      done
+    else
+      echo "  (agy not on PATH, skip)"
+    fi
+    echo "== dsh (regenerate the dsh-mcp-client block in every profile) =="
+    if command -v dsh >/dev/null 2>&1 && [ -d "$HOME/.dsh/profiles" ]; then
+      $PY - <<'PY'
+import glob, json, pathlib
+members = sorted(
+    (int(m["port"]), m["name"])
+    for mf in pathlib.Path(".").glob("*/*/mcp.json")
+    if not any(p.startswith("_") for p in mf.parts)
+    for m in [json.loads(mf.read_text(encoding="utf-8"))]
+)
+lines = ["- insert:"]
+for port, name in members:
+    lines += [
+        f"  - id: mcp-{name}",
+        "    name: '@deepseek-ai/dsh-mcp-client'",
+        "    config:",
+        f"      serverName: {name}",
+        "      transport: streamable-http",
+        f"      url: http://localhost:{port}/mcp",
+    ]
+for pf in glob.glob(str(pathlib.Path.home() / ".dsh/profiles/*/cordis.patch.yml")):
+    p = pathlib.Path(pf)
+    old = p.read_text(encoding="utf-8").splitlines()
+    starts = [i for i, l in enumerate(old) if l.startswith("- ")]
+    spans = [(s, starts[k + 1] if k + 1 < len(starts) else len(old)) for k, s in enumerate(starts)]
+    # every top-level block that carries dsh-mcp-client entries is fleet-owned:
+    # drop them all, then insert one regenerated block where the first one lived
+    hits = [(s, e) for s, e in spans if any("dsh-mcp-client" in old[i] for i in range(s, e))]
+    if hits:
+        drop = {i for s, e in hits for i in range(s, e)}
+        kept = [l for i, l in enumerate(old) if i not in drop]
+        at = hits[0][0]
+        sep = [""] if len(kept) > at and kept[at].startswith("- ") else []
+        new = kept[:at] + lines + sep + kept[at:]
+        action = f"regenerated {len(hits)} block(s) merged" if len(hits) > 1 else "regenerated"
+    else:
+        new = (old + [""] + lines) if old and old[-1].strip() else old + lines
+        action = "appended"
+    p.write_text("\n".join(new) + "\n", encoding="utf-8")
+    print(f"  {p.parent.name}: {action}, {len(members)} entries")
+print(f"  expected dsh-mcp-client count per profile: {len(members)}")
+PY
+      for pf in "$HOME"/.dsh/profiles/*/cordis.patch.yml; do
+        prof=$(basename "$(dirname "$pf")")
+        cnt=$(dsh --profile "$prof" --dump-config 2>/dev/null | grep -c dsh-mcp-client || true)
+        echo "  verify $prof --dump-config: $cnt dsh-mcp-client entries"
+      done
+      echo "  (dsh loads the patch only at startup — restart the profile to pick changes up)"
+    else
+      echo "  (dsh not on PATH or ~/.dsh/profiles missing, skip)"
+    fi
+    echo "== ZCode (~/.zcode/cli/config.json -> mcp.servers) =="
+    if [ -d "$HOME/.zcode/cli" ]; then
+      $PY - <<'PY'
+import json, pathlib
+members = sorted(
+    (int(m["port"]), m["name"])
+    for mf in pathlib.Path(".").glob("*/*/mcp.json")
+    if not any(p.startswith("_") for p in mf.parts)
+    for m in [json.loads(mf.read_text(encoding="utf-8"))]
+)
+p = pathlib.Path.home() / ".zcode/cli/config.json"
+cfg = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+servers = cfg.setdefault("mcp", {}).setdefault("servers", {})
+for port, name in members:
+    servers[name] = {"type": "http", "url": f"http://localhost:{port}/mcp"}
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+print(f"  mcp.servers: {len(members)} fleet entries written (add/update only, no auto-removal)")
+PY
+    else
+      echo "  (~/.zcode/cli not found, skip)"
+    fi
+    echo "done. Claude/Codex/agy/ZCode pick tools up in NEW sessions; dsh needs a profile restart."
+    ;;
+
   sync)
     # Make every wsl MCP live the same way (no per-MCP special-casing):
-    # start under PM2 -> persist for boot -> register with Claude -> health.
+    # start under PM2 -> persist for boot -> register with every client -> health.
     "$0" up
     pm2 save >/dev/null 2>&1 || true
-    "$0" install-claude
+    "$0" install-clients
     "$0" health
     ;;
 

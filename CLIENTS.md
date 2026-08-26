@@ -4,7 +4,11 @@
 > 舰队本身见 [README.zh.md](README.zh.md);运维铁律见 [OPS_NOTES.md](OPS_NOTES.md)。
 > 2026-08-25 首次全量接线(含 ics-core),此后新增成员按 §4 重同步。
 
-## 1. 接线总览(2026-08-25 状态)
+## 1. 接线总览(2026-08-25 状态; 2026-08-26 起有一键刷新)
+
+**一键刷新**: `./fleet.sh install-clients`(被 `./fleet.sh sync` 包含) 幂等地把全部成员
+重注册到五端(Claude/Codex/agy/dsh 双档/ZCode); 改端口、加/删成员后跑它即可。
+dsh 侧该命令会整体重建 `dsh-mcp-client` 块(顺带清理退役成员残留条目), 其余手工细节见下。
 
 统一地址 `http://localhost:<port>/mcp`(streamable-http,本机回环;
 WSL2 mirrored 网络下 Win 侧同样可达)。
@@ -85,6 +89,19 @@ dsh --profile <p> --dump-config | grep -c dsh-mcp-client   # 应等于当前成�
 ```
 
 ## 4. 新增舰队成员的重同步清单
+
+**2026-08-26 起一条命令**: `./fleet.sh sync` = up + pm2 save + `install-clients` + health。
+`install-clients` 内部对五端做的事(CLI 缺席自动跳过):
+
+- Claude: 逐成员 `claude mcp remove` + `mcp add --transport http ... -s user`
+- Codex: 逐成员 `codex mcp remove` + `codex mcp add --url ...`(它无 add-or-update 语义)
+- agy: `agy mcp add`(原生 add-or-update)
+- dsh: 每个 profile 的 `cordis.patch.yml` 里 `dsh-mcp-client` 块**整体重建**(按端口排序;
+  多个散块自动合并, 退役成员条目自动清理; 块外注释/其他 patch 保留), 随后
+  `dsh --dump-config` 计数核验 — **改完必须重启对应 profile**(patch 只在启动时加载)
+- ZCode: `~/.zcode/cli/config.json` 的 `mcp.servers` 按名增改(不自动删, 防误删用户自有本地 MCP)
+
+手工接线细节(排障/单端补装时参考):
 
 1. `cp -r _template wsl/<name>` 起服务(见 README.zh.md),`fleet.sh up`
 2. `python3 gen_config.py` 拿到新 JSON

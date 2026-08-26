@@ -58,12 +58,14 @@ Members come in two shapes, both keeping the same mcp.json / port / `/health` co
 # edit wsl/myname/server.py  (write @mcp.tool());  add deps to requirements.txt
 uv pip compile requirements.txt -o requirements.lock   # in the MCP dir
 ./fleet.sh validate && ./fleet.sh test                 # MUST pass
-./fleet.sh sync                # wsl: start + persist + register with Claude + health
+./fleet.sh sync                # wsl: start + persist + install-clients + health
                                # (win: re-run win/install-autostart.ps1 on the Windows host)
 ```
 `sync` treats every wsl MCP identically — nothing is special-cased per MCP. After
 `./fleet.sh sync` the new MCP is running, survives reboot (once `pm2 startup` was set up
-once), and is callable from Claude Code, exactly like the existing ones.
+once), and is callable from every client (Claude Code / Codex / agy / dsh / ZCode) via
+`install-clients`, exactly like the existing ones. Clients pick tools up in new sessions;
+dsh needs a profile restart.
 
 ## Edit / remove an MCP
 

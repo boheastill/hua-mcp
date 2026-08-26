@@ -17,6 +17,7 @@ git clone https://github.com/boheastill/hua-mcp && cd hua-mcp
 ./fleet.sh test         # install deps + import each server (smoke)
 ./fleet.sh up           # start the WSL servers under PM2
 ./fleet.sh health       # curl every /health
+./fleet.sh install-clients   # re-register every MCP into ALL clients (Claude/Codex/agy/dsh/ZCode), idempotent
 ```
 
 ## The contract: your server file only declares tools
