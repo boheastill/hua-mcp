@@ -105,11 +105,14 @@ edited**.
 | MCP | Port | Host | What it does |
 |---|---|---|---|
 | `vpn` | 8001 | Windows | Manage a local sing-box proxy: status, restart, connectivity and route tests, log tail, config read/validate/write, node switching |
+| `glm-search` | 8100 | WSL | Relay to BigModel's plan-only web-search MCP: `web_search_prime` (×1.2 credits); key reused from `~/.glm/key.txt`, see OPS_NOTES §十二 |
 | `identity` | 8101 | WSL | Nine checks an agent can run to work out *which model it is actually running as* — env analysis, DNS/endpoint verification, runtime and process inspection, fused into a confidence score with counter-evidence stated |
 | `glmvision` | 8102 | WSL | `describe_image` — vision/OCR via Zhipu GLM vision models |
 | `agy` | 8103 | WSL | `agy_ask`/`agy_quota` — delegate heavy/Google-grade work to the agy CLI |
 | `ics-core` | 8104 | WSL | ICS message stream: `list_messages` `read_message` `push_message` `push_file` `manage_message` (see the [ics project](../ics/ics-mcp-server/README.md)) |
 | `local-model` | 8105 | WSL | `local_ask` + `local_vision` — local LLM delegation via the lb desktop's llama-server (OpenAI-compatible; auto-discovers the live model, see the model registry) |
+| `glm-reader` | 8106 | WSL | Relay to BigModel's plan-only web-reader MCP: `webReader` (URL → structured content, ×1.2 credits) |
+| `glm-repo` | 8107 | WSL | Relay to BigModel's zread MCP: `search_doc` / `get_repo_structure` / `read_file` for digesting public GitHub repos (×1.2 credits) |
 | `md2pdf` | 8110 | WSL | Markdown → PDF, fully offline: mermaid blocks pre-rendered to inline base64 SVG by a locally installed `mmdc` (no network, no `npx` cold start), CJK-safe fonts pinned by Nix. Exposed both as an MCP tool and as `POST /pdf` |
 | `printctl` | 8120 | WSL | LAN printer control: print/scan/status discovery |
 | `paper-hub` | 8121 | WSL | Physical paper tasks: `create_paper_task` etc. |

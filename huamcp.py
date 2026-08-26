@@ -98,3 +98,128 @@ def run(mcp: FastMCP) -> None:
     app = mcp.streamable_http_app()
     app.add_middleware(_BearerAuth)
     uvicorn.run(app, host=hua["host"], port=hua["port"])
+
+
+# ------------------------------------------------------------------ relay
+# For remote MCP upstreams (BigModel coding-plan's web_search_prime /
+# web_reader / zread): a transparent streamable-http relay keeps the upstream
+# key in ONE file (~/.glm/key.txt) so every client wires to plain loopback
+# with zero credentials, while tools/schema pass through as-is. A relay
+# member's server.py is exactly:
+#
+#     app = huamcp.relay(__file__, "https://open.bigmodel.cn/api/mcp/<x>/mcp")
+#     if __name__ == "__main__":
+#         huamcp.run_relay(app, __file__)
+
+
+def _bearer_key(auth_env: str, key_paths: tuple[str, ...]) -> str:
+    """Key lookup: env var first, then first non-comment line of each file
+    (a quoted substring wins, so both plain keys and `key.ps1`-style files work).
+    Read per request so a rotated key needs no restart."""
+    v = os.environ.get(auth_env, "").strip()
+    if v:
+        return v
+    import re
+
+    for raw_path in key_paths:
+        try:
+            lines = pathlib.Path(raw_path).expanduser().read_text("utf-8").splitlines()
+        except OSError:
+            continue
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            m = re.search(r'"([^"]+)"', line)
+            return m.group(1) if m else line
+    return ""
+
+
+def relay(
+    server_file: str,
+    upstream: str,
+    auth_env: str = "GLM_API_KEY",
+    key_paths: tuple[str, ...] = ("~/.glm/key.txt",),
+):
+    """Starlette app: local ``/health`` + ``/mcp`` transparently relayed to a
+    remote streamable-http MCP. POST/GET/DELETE are forwarded with the session
+    headers and an injected ``Authorization: Bearer <key>``. No MCP protocol
+    handling happens here — bytes pass through, upstream tools surface as-is
+    (upstream errors like 401 quota pass through too, unmasked)."""
+    import httpx
+    from starlette.applications import Starlette
+    from starlette.background import BackgroundTask
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse, Response, StreamingResponse
+    from starlette.routing import Route
+
+    meta = load_meta(server_file)
+    # hop-by-hop / framing headers must never be copied across the relay
+    FWD_REQ = ("content-type", "accept", "mcp-session-id", "mcp-protocol-version", "last-event-id")
+    FWD_RES = ("content-type", "mcp-session-id", "mcp-protocol-version")
+    client = httpx.AsyncClient(timeout=httpx.Timeout(connect=15.0, read=600.0, write=120.0, pool=15.0))
+
+    async def _health(request: Request) -> Response:  # noqa: ANN001
+        return JSONResponse(
+            {
+                "ok": True,
+                "mcp": meta["name"],
+                "os": meta.get("os"),
+                "port": int(os.environ.get("HUAMCP_PORT", meta["port"])),
+                "upstream": upstream,
+                "key_ok": bool(_bearer_key(auth_env, key_paths)),
+            }
+        )
+
+    async def _proxy(request: Request) -> Response:  # noqa: ANN001
+        key = _bearer_key(auth_env, key_paths)
+        if not key:
+            return JSONResponse(
+                {"detail": f"upstream key missing: set {auth_env} or write {key_paths[0]}"},
+                status_code=503,
+            )
+        headers = {k: v for k, v in request.headers.items() if k.lower() in FWD_REQ}
+        headers["authorization"] = f"Bearer {key}"
+        url = upstream + (f"?{request.url.query}" if request.url.query else "")
+        # GET opens the (possibly long-idle) server->client stream: no read timeout there
+        timeout = httpx.Timeout(
+            connect=15.0,
+            read=None if request.method == "GET" else 600.0,
+            write=120.0,
+            pool=15.0,
+        )
+        try:
+            req = client.build_request(request.method, url, headers=headers, content=request.stream())
+            resp = await client.send(req, stream=True)
+        except httpx.HTTPError as e:
+            return JSONResponse({"detail": f"upstream unreachable: {e}"}, status_code=502)
+        out_headers = {k: v for k, v in resp.headers.items() if k.lower() in FWD_RES}
+
+        async def _passthrough():
+            async for chunk in resp.aiter_bytes():
+                yield chunk
+
+        return StreamingResponse(
+            _passthrough(),
+            status_code=resp.status_code,
+            headers=out_headers,
+            background=BackgroundTask(resp.aclose),
+        )
+
+    return Starlette(
+        routes=[
+            Route("/health", _health, methods=["GET"]),
+            Route("/mcp", _proxy, methods=["POST", "GET", "DELETE"]),
+        ]
+    )
+
+
+def run_relay(app, server_file: str) -> None:
+    """Serve a relay app under the same bind/public/port rules as run()."""
+    import uvicorn
+
+    meta = load_meta(server_file)
+    public = "--public" in sys.argv or os.environ.get("HUAMCP_PUBLIC") == "1" or bool(meta.get("public"))
+    host = "0.0.0.0" if public else "127.0.0.1"
+    port = int(os.environ.get("HUAMCP_PORT", meta["port"]))
+    uvicorn.run(app, host=host, port=port)

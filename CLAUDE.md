@@ -41,6 +41,16 @@ see **[CLIENTS.md](CLIENTS.md)**. Ops rules and incident history: OPS_NOTES.md.
 6. **`huamcp.py` is shared by every MCP.** Editing it affects all of them — change it
    only deliberately, then run `./fleet.sh test`.
 
+Members come in two shapes, both keeping the same mcp.json / port / `/health` contract:
+
+- **tool members** — server.py declares `@mcp.tool()`s (the default shape);
+- **relay members** — server.py is just
+  `app = huamcp.relay(__file__, "<remote-mcp-url>")` + `huamcp.run_relay(app, __file__)`.
+  `/mcp` is transparently forwarded to a remote streamable-http MCP with the upstream
+  Bearer key injected server-side (default `~/.glm/key.txt`), so tools/schemas pass
+  through as-is and clients stay credential-free. See glm-search / glm-reader / glm-repo
+  and OPS_NOTES §12. Don't reimplement remote MCP tools locally when a relay fits.
+
 ## Add an MCP
 
 ```bash

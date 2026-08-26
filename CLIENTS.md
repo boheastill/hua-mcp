@@ -36,11 +36,16 @@ antigravity-cli 与 agy 共用 `~/.gemini/config/mcp_config.json`,一处写入�
 cd /home/bohea/bh-workspace/infra/hua-mcp && python3 gen_config.py
 ```
 
-vpn:8001(Win) · identity:8101 · glmvision:8102 · agy:8103 · **ics-core:8104** ·
-local-model:8105 · md2pdf:8110 · printctl:8120 · paper-hub:8121 · **phone-eye:8122**
+vpn:8001(Win) · **glm-search:8100**(套餐联网搜索中继) · identity:8101 · glmvision:8102 · agy:8103 · **ics-core:8104** ·
+local-model:8105 · **glm-reader:8106**(套餐网页读取中继) · **glm-repo:8107**(套餐开源仓库 zread 中继) ·
+md2pdf:8110 · printctl:8120 · paper-hub:8121 · **phone-eye:8122**
 (公开项目 github.com/boheastill/phone-eye, 舰队壳 wsl/phone-eye 复用其 server.py) ·
 **kimi:8125**(Kimi Code 订阅 K3 门面: `kimi_ask` 文本委托/`kimi_vision` 看图;
 密钥 `~/.kimi/key.txt`, 同一把 Key 亦是 dsh 原生路由 kimi/k3; 总笔记 ~/agent/kimi/README.md)
+
+> glm-search/glm-reader/glm-repo 三个中继成员是智谱编程套餐专属远程 MCP(联网搜索/网页读取/zread)
+> 的本地透传: 客户端照常连 `localhost` 零凭据, 上游 Bearer key 只存 `~/.glm/key.txt` 一处
+> (与 glmvision 同一把)。调用按次计套餐积分(×1.2), 详见 OPS_NOTES §十二。
 
 > 历史注:曾有成员 zcode-bridge:8123(2026-08-25 加入, 2026-08-26 因上游项目严重 bug
 > 整体拆除, 港位让渡)。桥接 agent 当执行器的**技术经验**见 OPS_NOTES §七点五(HOME 陷阱)

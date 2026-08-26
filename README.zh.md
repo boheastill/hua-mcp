@@ -58,11 +58,14 @@ uv pip compile requirements.txt -o requirements.lock   # 锁依赖(可复现)
 | MCP | 端口 | 宿主 | 工具 |
 |---|---|---|---|
 | `vpn` | 8001 | Windows | `vpn_restart` `vpn_status` `vpn_connectivity_test` `vpn_logs` `vpn_config` `vpn_config_write` `vpn_apply` `vpn_switch_node` `vpn_route_test` |
+| `glm-search` | 8100 | WSL | 智谱套餐「联网搜索」中继:`web_search_prime`(全网搜索, ×1.2积分); key 复用 `~/.glm/key.txt`, 详见 OPS_NOTES §十二 |
 | `identity` | 8101 | WSL | 9 个模型身份/运行环境检测 |
 | `glmvision` | 8102 | WSL | `describe_image` 看图/OCR(智谱 GLM 视觉) |
 | `agy` | 8103 | WSL | `agy_ask`/`agy_quota` 等谷歌系重活外包通道 |
 | `ics-core` | 8104 | WSL | `list_messages` `read_message` `push_message` `push_file` `manage_message`(ICS 消息流,详见 [ics 项目](../ics/ics-mcp-server/README.md)) |
 | `local-model` | 8105 | WSL | `local_ask`(自动发现 lb 活模型)+ `local_vision` 本地看图; 真身 lb llama-server, 见 [模型台账](../../docs/model-registry/README.md) |
+| `glm-reader` | 8106 | WSL | 智谱套餐「网页读取」中继:`webReader`(URL 转结构化正文/元数据, ×1.2积分) |
+| `glm-repo` | 8107 | WSL | 智谱套餐「开源仓库」zread 中继:`search_doc`/`get_repo_structure`/`read_file` 吃透公开 GitHub 仓库(×1.2积分) |
 | `md2pdf` | 8110 | WSL | `md_to_pdf`;另开 REST `POST /pdf`(将来公网端点) |
 | `printctl` | 8120 | WSL | 局域网打印机 `print_file` `scan_document` 等 |
 | `paper-hub` | 8121 | WSL | 物理纸张任务 `create_paper_task` 等 |

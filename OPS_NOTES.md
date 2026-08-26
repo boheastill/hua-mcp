@@ -79,6 +79,9 @@ nohup bash -c 'sleep 35; systemctl --user restart dsh-web' >/tmp/dsh-restart.log
 |---|---|---|
 | 纯看图 / OCR / 截图识别 | `mcp__glmvision__describe_image` | 秒级、便宜、不走 agy 额度、不留会话; 429 自动降级免费档 |
 | 看图 + 深度推理 / 联网 / 多步操作 | `mcp__agy__agy_ask` | agy 自己看图并继续推理 |
+| 联网查资料 / 搜最新信息 | `mcp__glm-search__web_search_prime` | 套餐搜索 ×1.2积分/次, 比 agy 便宜直接; 搜完要深读推理再交 agy |
+| 读具体网页 / 抓正文 | `mcp__glm-reader__webReader` | 主模型无浏览器时的读页通道(×1.2积分/次) |
+| 吃透一个公开 GitHub 仓库 | `mcp__glm-repo__search_doc` 等 | zread 文档/结构/文件三件套, 先于 clone 通读(×1.2积分/次) |
 | 复杂推理 / 联网调研 / 重活 | `mcp__agy__agy_ask` | 主模型不够用时外包 |
 | 简单问答 / 主模型自己能答的 | **别调** | 省额度省时间 |
 | 批量任务前 | `mcp__agy__agy_quota` | 油表, 防中途耗尽 |
@@ -198,3 +201,29 @@ dsh 会话调 agy MCP 立即 `MCP error -32001 timeout`, 同期 agy CLI 本体�
 (旁证: agy CLI 作为 client 连自己也 5 分钟握手不上 → 问题在 agy server 端)。
 完整时间线/排查单/CLI 替代姿势: `docs/incident-agy-mcp-timeout-20260825.md`。
 临时替代 = CLI 后台跑 (`agy --effort medium --print-timeout 10m --output-format text --print='...'`)。
+
+## 十二、BigModel 套餐专属 MCP 中继 (2026-08-26 接入)
+
+智谱编程套餐四个专属 MCP(文档 docs.bigmodel.cn/cn/coding-plan/mcp/): 视觉理解/联网搜索/网页读取/开源仓库(zread)。
+接入决策与实锤:
+
+- **三个远程 HTTP 型以本地中继成员入舰队**: `glm-search:8100`(web_search_prime)、
+  `glm-reader:8106`(web_reader)、`glm-repo:8107`(zread)。server.py 各 ~15 行, 核心就一句
+  `huamcp.relay(__file__, 上游URL)`(plumbing 在 huamcp.py, §见下)。
+  **取舍**: 直连远程 MCP 得把 Bearer key 复制进 4 个客户端配置(dsh 的 dsh-mcp-client 还未必支持自定义 header);
+  中继后客户端照常连 localhost 零凭据, key 只存 `~/.glm/key.txt` 一处(与 glmvision 同一把,
+  **已实测该 key initialize 200 过套餐 MCP 鉴权**), 且统一进 pm2/health/接线流程。
+- **额度**: 联网搜索/网页读取/zread 每次调用 ×1.2 积分; 视觉 MCP 是 GLM-5.3-Flash ×8。中继不缓存, 省额度靠少调。
+- **实测要点**: 搜索工具真名 `web_search_prime`(文档页写的 `webSearchPrime` 不准), 必填 `search_query`
+  (另有 search_domain_filter / search_recency_filter: oneDay~noLimit / content_size: medium|high / location: cn|us);
+  reader 工具 `webReader(url, ...)`; zread 三件套 `search_doc` / `get_repo_structure` / `read_file`
+  (仅限 zread.ai 收录的公开 GitHub 仓库, owner/repo 格式)。
+- **中继工具的 description 是上游透传的, 本地改不了** — §七委托指南写不进它们的工具描述, 只在本档。
+- **视觉理解 MCP 未入舰队**(有意取舍): 官方是 npm stdio 包 `@z_ai/mcp-server`(8 工具, 需 Z_AI_API_KEY,
+  积分 ×8)。舰队 glmvision(8102, 按量+429 自动降级) + ZCode/Claude 内置 image_analysis 已覆盖看图主力场景;
+  桥接 stdio→HTTP 要给纯 Python 舰队引 node 常驻, 不值。真需要专用工具(ui_to_artifact/ui_diff_check/video_analysis)时
+  按官方文档给单个客户端直连:
+  `claude mcp add -s user zai-mcp-server --env Z_AI_API_KEY=<套餐key> -- npx -y @z_ai/mcp-server@latest`。
+- **huamcp.relay 实现注意**: hop-by-hop 头(content-length/content-encoding 等)不过河;
+  GET 长连流不设 read 超时; 上游 401/限流**原样透传**不掩盖; key 每请求重读, 换 key 免重启;
+  /health 额外带 `upstream` 与 `key_ok` 字段可快速排障。
