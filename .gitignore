@@ -14,3 +14,6 @@ result
 fleet-mcp.json
 *.log
 .claude/settings.local.json
+
+# Playwright MCP runtime artifacts (page snapshots written to its cwd)
+**/.playwright-mcp/
