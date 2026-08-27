@@ -197,7 +197,7 @@ $dirs"
     $PY - <<'PY'
 import json, pathlib, re, sys, urllib.error, urllib.request
 
-def post(url, body, headers=None, timeout=20):
+def post(url, body, headers=None, timeout=45):
     data = json.dumps(body).encode()
     h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
     if headers:
@@ -226,36 +226,49 @@ for name, port, os_ in members:
         print(f"  = {name} :{port} ({os_}) skipped (starts on Windows host)")
         continue
     url = f"http://localhost:{port}/mcp"
-    try:
-        st, hdrs, raw = post(url, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2025-03-26", "capabilities": {},
-            "clientInfo": {"name": "fleet-verify", "version": "0"}}})
-        d = data_of(raw)
-        if st != 200 or not d or "result" not in d:
-            raise RuntimeError(f"initialize HTTP {st}: {raw[:120]}")
-        sid = next((v for k, v in hdrs.items() if k.lower() == "mcp-session-id"), None)
-        if sid:
-            try:
-                post(url, {"jsonrpc": "2.0", "method": "notifications/initialized"},
-                     {"mcp-session-id": sid}, timeout=10)
-            except Exception:
-                pass
-        _, _, raw2 = post(url, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-                          ({"mcp-session-id": sid} if sid else None))
-        d2 = data_of(raw2)
-        tools = [t["name"] for t in d2["result"]["tools"]] if d2 and "result" in d2 else []
-        if not tools:
-            raise RuntimeError(f"tools/list returned no tools: {raw2[:120]}")
-        info = d["result"].get("serverInfo", {}).get("name", "")
-        shown = ", ".join(tools[:4]) + ("…" if len(tools) > 4 else "")
-        print(f"  ✓ {name} :{port}  tools={len(tools)} ({shown}){f'  [{info}]' if info else ''}")
-        ok += 1
-    except urllib.error.URLError as e:
+    # one retry: relay upstreams (Cloudflare etc.) and PTY-based members (agy
+    # cold-starts its CLI) both have transient first-touch failures
+    for attempt in (1, 2):
+        try:
+            st, hdrs, raw = post(url, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2025-03-26", "capabilities": {},
+                "clientInfo": {"name": "fleet-verify", "version": "0"}}})
+            d = data_of(raw)
+            if st != 200 or not d or "result" not in d:
+                raise RuntimeError(f"initialize HTTP {st}: {raw[:120]}")
+            sid = next((v for k, v in hdrs.items() if k.lower() == "mcp-session-id"), None)
+            if sid:
+                try:
+                    post(url, {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                         {"mcp-session-id": sid}, timeout=15)
+                except Exception:
+                    pass
+            _, _, raw2 = post(url, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                              ({"mcp-session-id": sid} if sid else None))
+            d2 = data_of(raw2)
+            tools = [t["name"] for t in d2["result"]["tools"]] if d2 and "result" in d2 else []
+            if not tools:
+                raise RuntimeError(f"tools/list returned no tools: {raw2[:120]}")
+            info = d["result"].get("serverInfo", {}).get("name", "")
+            shown = ", ".join(tools[:4]) + ("…" if len(tools) > 4 else "")
+            suffix = f"  [{info}]" if info else ""
+            if attempt == 2:
+                suffix += "  (ok on retry)"
+            print(f"  ✓ {name} :{port}  tools={len(tools)} ({shown}){suffix}")
+            ok += 1
+            break
+        except urllib.error.HTTPError as e:
+            err = f"HTTP {e.code} from member/upstream"
+        except urllib.error.URLError as e:
+            err = f"unreachable ({e.reason}) — ./fleet.sh up?"
+        except Exception as e:  # noqa: BLE001 — report, don't crash the sweep
+            err = str(e)
+        if attempt == 1:
+            import time
+            time.sleep(2)
+    else:
         fail += 1
-        print(f"  ✗ {name} :{port}  unreachable ({e.reason}) — ./fleet.sh up?")
-    except Exception as e:  # noqa: BLE001 — report, don't crash the sweep
-        fail += 1
-        print(f"  ✗ {name} :{port}  {e}")
+        print(f"  ✗ {name} :{port}  {err}")
 print(f"verify: {ok} ok, {fail} failed, {skip} skipped")
 sys.exit(1 if fail else 0)
 PY

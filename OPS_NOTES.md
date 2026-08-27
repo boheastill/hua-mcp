@@ -266,6 +266,10 @@ dsh 会话调 agy MCP 立即 `MCP error -32001 timeout`, 同期 agy CLI 本体�
 - **`fleet.sh verify`** — 协议级 E2E: 每成员真跑 MCP initialize + tools/list,
   打印工具数与上游 serverInfo。能抓 /health 抓不到的病(venv 坏/工具代码坏/中继上游挂)。
   **只读不重启**(绝不静默 pm2 restart, 不会打断客户端会话); 实测 16/16 全绿。
+  韧性: 超时 45s + 失败自动重试一次(中继上游 Cloudflare 瞬态 5xx、agy 冷启动毛刺都能
+  自愈); **agy 特记(2026-08-27 实锤)**: 长时间闲置后首次 verify 可能连 90s 都超时
+  (与 2026-08-25 故障档同源的 server 端残留阻塞, initialize 并不碰 PTY), 跑第二遍即绿 —
+  遇 agy 单项 ✗ 先重跑一遍 verify 再排查。
 - **`fleet.sh secrets`** — 密钥审计: 元数据在 mcp.json 可选 `secrets: [{env, path,
   optional?, note?}]`(auth_env 自动并入为 optional)。查存在性+0600; required 缺失才 FAIL。
   当前台账: glm 全家+glmvision 用 ~/.glm/key.txt, kimi 用 ~/.kimi/key.txt, ics-core 用
