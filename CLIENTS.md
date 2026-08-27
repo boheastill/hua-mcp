@@ -7,7 +7,9 @@
 ## 1. 接线总览(2026-08-25 状态; 2026-08-26 起有一键刷新)
 
 **一键刷新**: `./fleet.sh install-clients`(被 `./fleet.sh sync` 包含) 幂等地把全部成员
-重注册到五端(Claude/Codex/agy/dsh 双档/ZCode); 改端口、加/删成员后跑它即可。
+重注册到五端(Claude/Codex/agy/dsh 双档/ZCode); 改端口、加/删成员后跑它即可;
+先跑 `--dry-run` 可预览五端将新增/更新/清理什么再落盘。
+成员可用 mcp.json 的可选 `"clients": [...]` 限制只注册到指定端(缺省=全端)。
 dsh 侧该命令会整体重建 `dsh-mcp-client` 块(顺带清理退役成员残留条目), 其余手工细节见下。
 
 统一地址 `http://localhost:<port>/mcp`(streamable-http,本机回环;

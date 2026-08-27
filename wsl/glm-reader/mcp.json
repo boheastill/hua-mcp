@@ -3,5 +3,12 @@
   "port": 8106,
   "os": "wsl",
   "public": false,
-  "desc": "智谱网页读取 webReader 中继(套餐MCP ×1.2积分): 抓 URL 网页转结构化正文, 主模型无浏览器时的读页通道。"
+  "desc": "智谱网页读取 webReader 中继(套餐MCP ×1.2积分): 抓 URL 网页转结构化正文, 主模型无浏览器时的读页通道。",
+  "secrets": [
+    {
+      "env": "GLM_API_KEY",
+      "path": "~/.glm/key.txt",
+      "note": "Zhipu API key (vision + plan MCP relays)"
+    }
+  ]
 }

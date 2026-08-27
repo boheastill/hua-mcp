@@ -3,5 +3,12 @@
   "port": 8102,
   "os": "wsl",
   "public": false,
-  "desc": "GLM-5V-Turbo 看图: describe_image(path, question?) — DeepSeek 等纯文本主代理的图片理解委托。"
+  "desc": "GLM-5V-Turbo 看图: describe_image(path, question?) — DeepSeek 等纯文本主代理的图片理解委托。",
+  "secrets": [
+    {
+      "env": "GLM_API_KEY",
+      "path": "~/.glm/key.txt",
+      "note": "Zhipu API key (vision + plan MCP relays)"
+    }
+  ]
 }

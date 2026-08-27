@@ -1,6 +1,7 @@
 """fleet wrapper — phone-eye 舰队成员壳。
 
-单一事实源在 ~/bh-workspace/infra/phone-eye/server.py(独立可分发版);
+单一事实源在 ~/bh-workspace/app/phone-eye/server.py(独立可分发版; 2026-08-27
+随槽位治理迁入 app 槽=增益产品线, infra 只留止损基建);
 本壳只做两件事: 挂到 huamcp HTTP 传输 + 默认指向舰队视觉成员(8102)。
 """
 import os
@@ -11,9 +12,9 @@ import sys
 import importlib.util
 
 _HERE = pathlib.Path(__file__).resolve().parent
-_CORE = _HERE.parents[2] / "phone-eye" / "server.py"
+_CORE = _HERE.parents[3] / "app" / "phone-eye" / "server.py"
 if not _CORE.is_file():
-    raise SystemExit(f"phone-eye 舰队壳: 找不到独立版真身 {_CORE} (应在本机 infra/phone-eye/, GitHub: boheastill/phone-eye)")
+    raise SystemExit(f"phone-eye 舰队壳: 找不到独立版真身 {_CORE} (应在本机 app/phone-eye/, GitHub: boheastill/phone-eye)")
 # 按路径加载为 phone_eye_core —— 本壳自身也叫 server, 直接 `import server`
 # 在本壳被当作 server 模块导入时(fleet.sh test 的 import 冒烟)会递归命中自己。
 _spec = importlib.util.spec_from_file_location("phone_eye_core", _CORE)

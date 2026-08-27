@@ -17,6 +17,9 @@ git clone https://github.com/boheastill/hua-mcp && cd hua-mcp
 ./fleet.sh test         # install deps + import each server (smoke)
 ./fleet.sh up           # start the WSL servers under PM2
 ./fleet.sh health       # curl every /health
+./fleet.sh verify       # protocol-level E2E: real initialize + tools/list per member (read-only)
+./fleet.sh secrets      # audit key files members depend on (existence + 0600)
+./fleet.sh install-clients --dry-run   # preview what would change in every client
 ./fleet.sh install-clients   # re-register every MCP into ALL clients (Claude/Codex/agy/dsh/ZCode), idempotent
 ```
 

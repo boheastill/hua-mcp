@@ -3,5 +3,12 @@
   "port": 8107,
   "os": "wsl",
   "public": false,
-  "desc": "智谱开源仓库 zread 中继(套餐MCP ×1.2积分): search_doc/get_repo_structure/read_file 快速吃透公开 GitHub 仓库。"
+  "desc": "智谱开源仓库 zread 中继(套餐MCP ×1.2积分): search_doc/get_repo_structure/read_file 快速吃透公开 GitHub 仓库。",
+  "secrets": [
+    {
+      "env": "GLM_API_KEY",
+      "path": "~/.glm/key.txt",
+      "note": "Zhipu API key (vision + plan MCP relays)"
+    }
+  ]
 }

@@ -29,9 +29,12 @@ see **[CLIENTS.md](CLIENTS.md)**. Ops rules and incident history: OPS_NOTES.md.
    if __name__ == "__main__":
        huamcp.run(mcp)
    ```
-2. **`mcp.json` is the only metadata.** Keys: `name` (== its directory name), `port`,
-   `os` (`win`|`wsl`), `public` (bool), optional `auth_env`. There is **no central
-   registry** — never create one. Tools (`fleet.sh`, `gen_config.py`) discover MCPs by
+2. **`mcp.json` is the only metadata.** Keys: `name` (== its directory name),
+   `port`, `os` (`win`|`wsl`), `public` (bool), optional `auth_env`, `heavy`
+   (pm2 1G class), `clients` (allowlist of `claude|codex|agy|dsh|zcode` —
+   absent means every client), `secrets` (list of `{env, path, optional?,
+   note?}` consumed by `fleet.sh secrets`). There is **no central registry** —
+   never create one. Tools (`fleet.sh`, `gen_config.py`) discover MCPs by
    scanning `*/*/mcp.json`.
 3. **Ports:** win `8001-8099`, wsl `8100+`, unique. Don't hand-pick — use `fleet.sh new`.
 4. **Secure by default.** `huamcp` binds `127.0.0.1`. Never hardcode `0.0.0.0`; public

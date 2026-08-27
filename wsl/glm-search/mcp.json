@@ -3,5 +3,12 @@
   "port": 8100,
   "os": "wsl",
   "public": false,
-  "desc": "智谱联网搜索 webSearchPrime 中继(套餐MCP ×1.2积分): 全网搜索返回标题/URL/摘要, 联网查资料首选。"
+  "desc": "智谱联网搜索 webSearchPrime 中继(套餐MCP ×1.2积分): 全网搜索返回标题/URL/摘要, 联网查资料首选。",
+  "secrets": [
+    {
+      "env": "GLM_API_KEY",
+      "path": "~/.glm/key.txt",
+      "note": "Zhipu API key (vision + plan MCP relays)"
+    }
+  ]
 }

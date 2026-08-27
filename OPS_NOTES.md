@@ -258,3 +258,35 @@ dsh 会话调 agy MCP 立即 `MCP error -32001 timeout`, 同期 agy CLI 本体�
   - PG 连接: `dsn` 参数或环境变量 `PG_DSN`(pm2 进程加 env 后要 restart
     mcp-db-browser-8111); 无 DSN 时工具返回指引而非报错崩溃。
   - 结果防失控: 默认 max_rows=50 截断, 单元格 500 字符截断。
+
+## 十四、长期化四件套 verify/secrets/dry-run/clients + 沙箱决策 (2026-08-27)
+
+调研吸收落地(吸收源与理由见当日调研结论), 全部零新依赖、不动 pm2 架构:
+
+- **`fleet.sh verify`** — 协议级 E2E: 每成员真跑 MCP initialize + tools/list,
+  打印工具数与上游 serverInfo。能抓 /health 抓不到的病(venv 坏/工具代码坏/中继上游挂)。
+  **只读不重启**(绝不静默 pm2 restart, 不会打断客户端会话); 实测 16/16 全绿。
+- **`fleet.sh secrets`** — 密钥审计: 元数据在 mcp.json 可选 `secrets: [{env, path,
+  optional?, note?}]`(auth_env 自动并入为 optional)。查存在性+0600; required 缺失才 FAIL。
+  当前台账: glm 全家+glmvision 用 ~/.glm/key.txt, kimi 用 ~/.kimi/key.txt, ics-core 用
+  ~/.ics/token(均 600 ✓), context7 key 可选未配。
+- **`install-clients --dry-run`** — 五端变更预览(+/~/stale 一览)再落盘。
+  坑: dsh 的 cordis.patch.yml 允许 `!!js` 表达式, `yaml.safe_load` 直接抛异常 —
+  已用宽容 loader(未知 tag 置 None)+ 正则兜底双保险。
+- **mcp.json 可选 `clients` 字段** — 成员级注册白名单(claude/codex/agy/dsh/zcode),
+  缺省=全端。控制工具列表噪音(每多一条成员, 所有客户端会话的系统提示词就多一分)。
+  validate 会校验未知 client 名。当前无人使用(行为零变化), 需要时再加。
+- **沙箱硬化决策(有意不做 per-member systemd unit)**: 威胁模型=全回环+单用户,
+  真实风险面是"本用户任意进程", 给个别成员单开 unit 会破坏 pm2 统一模型
+  (resurrect 链复杂化=长期维护成本↑), 收益不抵。已落地的等效缓解:
+  db-browser 引擎级只读+显式 write; 真要隔离某成员时的 opt-in 配方:
+  `systemd-run --user --scope -p ProtectHome=read-only -p PrivateTmp=yes \
+    -- pm2 start <dir>/run.sh ...`(临时) 或独立 user unit + `ProtectHome=read-only`
+  (常驻, 但该成员要移出 pm2 改自启清单, 三思)。
+- **待决观察**: md2pdf `public:true` 且 MD2PDF_TOKEN 未设 = LAN 开放的 PDF 生成器
+  (回环外可达)。secrets 审计以 ⚠ optional 提示。要收紧: 设 MD2PDF_TOKEN 后
+  `pm2 restart mcp-md2pdf-8110` + 客户端 header, 或把 public 改回 false。
+- **Smithery 发布决策**: phone-eye 已加 podman 实测过的 Dockerfile+README Docker 段
+  (f6c047a); smithery.yaml 的 configSchema 注入机制当时文档 404 无法验证,
+  **不发布未验证的 manifest** — 提交时对照 smithery.ai 活文档写(stdio 型,
+  需 ANDROID_SERIAL/PHONE_EYE_VISION_URL 两个 config 字段)。

@@ -3,5 +3,13 @@
   "port": 8109,
   "os": "wsl",
   "public": false,
-  "desc": "Context7 中继(免费远程): 按版本拉最新库文档+代码示例, 补 GLM/DeepSeek 系模型对新版 API 的训练盲区, 压幻觉。"
+  "desc": "Context7 中继(免费远程): 按版本拉最新库文档+代码示例, 补 GLM/DeepSeek 系模型对新版 API 的训练盲区, 压幻觉。",
+  "secrets": [
+    {
+      "env": "CONTEXT7_API_KEY",
+      "path": "~/.context7/key.txt",
+      "optional": true,
+      "note": "free tier works without a key; key only raises rate limits"
+    }
+  ]
 }

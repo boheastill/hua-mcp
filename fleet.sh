@@ -17,7 +17,9 @@
 #   ./fleet.sh autostart   persist PM2 + print the boot-survival command
 #   ./fleet.sh new <wsl|win> <name>   scaffold a new MCP (auto-assigns a free port)
 #   ./fleet.sh install-claude         register every MCP into Claude Code (user scope)
-#   ./fleet.sh install-clients        register every MCP into ALL clients (Claude/Codex/agy/dsh/ZCode) — idempotent
+#   ./fleet.sh install-clients [--dry-run]  preview/apply registration into ALL clients (Claude/Codex/agy/dsh/ZCode) — idempotent
+#   ./fleet.sh verify            protocol-level E2E: MCP initialize + tools/list on every member
+#   ./fleet.sh secrets           audit key files members depend on (existence + 0600 perms)
 #   ./fleet.sh install-hooks          enable the git pre-commit guardrail (hooks/)
 #   ./fleet.sh sync                   up + pm2 save + install-clients + health (make ALL wsl MCPs live everywhere)
 set -euo pipefail
@@ -32,6 +34,22 @@ for mf in sorted(pathlib.Path('.').glob('*/*/mcp.json')):
     if any(p.startswith('_') for p in mf.parts):
         continue
     m = json.loads(mf.read_text(encoding='utf-8'))
+    print(m['name'], m['port'], m.get('os','wsl'), str(mf.parent), '1' if m.get('heavy') else '0')
+PY
+}
+
+# _mcps filtered by the optional mcp.json "clients" list (no key = all clients).
+# Used by every registration path; scan-only consumers keep using _mcps.
+_mcps_c() {
+  $PY - "$1" <<'PY'
+import json, pathlib, sys
+client = sys.argv[1]
+for mf in sorted(pathlib.Path('.').glob('*/*/mcp.json')):
+    if any(p.startswith('_') for p in mf.parts):
+        continue
+    m = json.loads(mf.read_text(encoding='utf-8'))
+    if m.get('clients') and client not in m['clients']:
+        continue
     print(m['name'], m['port'], m.get('os','wsl'), str(mf.parent), '1' if m.get('heavy') else '0')
 PY
 }
@@ -75,6 +93,21 @@ for mf in sorted(mans):
         if not band_ok: warns.append(f"{d}: port {port} outside band (win 8001-8099 / wsl 8100-8999)")
     else:
         errors.append(f"{d}: port must be an int, got {port!r}")
+    cl = m.get("clients")
+    if cl is not None:
+        if not isinstance(cl, list) or not cl:
+            errors.append(f"{d}: 'clients' must be a non-empty list")
+        else:
+            bad = [c for c in cl if c not in ("claude", "codex", "agy", "dsh", "zcode")]
+            if bad: warns.append(f"{d}: unknown clients {bad} (known: claude codex agy dsh zcode)")
+    secrets = m.get("secrets")
+    if secrets is not None:
+        if not isinstance(secrets, list):
+            errors.append(f"{d}: 'secrets' must be a list")
+        else:
+            for s in secrets:
+                if not isinstance(s, dict) or not (s.get("env") or s.get("path")):
+                    warns.append(f"{d}: secrets entry needs 'env' and/or 'path'")
     if not (d / "server.py").exists(): errors.append(f"{d}: missing server.py")
     if not (d / "requirements.txt").exists(): errors.append(f"{d}: missing requirements.txt")
     launcher = "run.ps1" if os_ == "win" else "run.sh"
@@ -156,6 +189,230 @@ $dirs"
   config)    $PY gen_config.py ;;
   autostart) pm2 save; echo "Now run 'pm2 startup' and execute the sudo line it prints." ;;
 
+  verify)
+    # Protocol-level E2E: real MCP initialize + tools/list against every member.
+    # Catches "process up but tools broken" that /health cannot see (bad venv,
+    # broken tool code, dead upstream for relays). Read-only — never restarts
+    # members, so it is safe to run while clients hold live sessions.
+    $PY - <<'PY'
+import json, pathlib, re, sys, urllib.error, urllib.request
+
+def post(url, body, headers=None, timeout=20):
+    data = json.dumps(body).encode()
+    h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    if headers:
+        h.update(headers)
+    req = urllib.request.Request(url, data=data, headers=h, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.status, dict(r.headers), r.read().decode("utf-8", "replace")
+
+def data_of(raw):
+    m = re.search(r"data: ?(\{.*)", raw)
+    if m:
+        return json.loads(m.group(1))
+    return json.loads(raw) if raw.strip().startswith("{") else None
+
+members = []
+for mf in sorted(pathlib.Path(".").glob("*/*/mcp.json")):
+    if any(p.startswith("_") for p in mf.parts):
+        continue
+    m = json.loads(mf.read_text(encoding="utf-8"))
+    members.append((m["name"], int(m["port"]), m.get("os", "wsl")))
+
+fail = skip = ok = 0
+for name, port, os_ in members:
+    if os_ != "wsl":
+        skip += 1
+        print(f"  = {name} :{port} ({os_}) skipped (starts on Windows host)")
+        continue
+    url = f"http://localhost:{port}/mcp"
+    try:
+        st, hdrs, raw = post(url, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-03-26", "capabilities": {},
+            "clientInfo": {"name": "fleet-verify", "version": "0"}}})
+        d = data_of(raw)
+        if st != 200 or not d or "result" not in d:
+            raise RuntimeError(f"initialize HTTP {st}: {raw[:120]}")
+        sid = next((v for k, v in hdrs.items() if k.lower() == "mcp-session-id"), None)
+        if sid:
+            try:
+                post(url, {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                     {"mcp-session-id": sid}, timeout=10)
+            except Exception:
+                pass
+        _, _, raw2 = post(url, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                          ({"mcp-session-id": sid} if sid else None))
+        d2 = data_of(raw2)
+        tools = [t["name"] for t in d2["result"]["tools"]] if d2 and "result" in d2 else []
+        if not tools:
+            raise RuntimeError(f"tools/list returned no tools: {raw2[:120]}")
+        info = d["result"].get("serverInfo", {}).get("name", "")
+        shown = ", ".join(tools[:4]) + ("…" if len(tools) > 4 else "")
+        print(f"  ✓ {name} :{port}  tools={len(tools)} ({shown}){f'  [{info}]' if info else ''}")
+        ok += 1
+    except urllib.error.URLError as e:
+        fail += 1
+        print(f"  ✗ {name} :{port}  unreachable ({e.reason}) — ./fleet.sh up?")
+    except Exception as e:  # noqa: BLE001 — report, don't crash the sweep
+        fail += 1
+        print(f"  ✗ {name} :{port}  {e}")
+print(f"verify: {ok} ok, {fail} failed, {skip} skipped")
+sys.exit(1 if fail else 0)
+PY
+    ;;
+
+  secrets)
+    # Audit secrets members depend on: env override set? key file present?
+    # mode 0600? Metadata = optional "secrets" list in mcp.json entries
+    # {env, path, optional?, note?}; mcp.json "auth_env" is auto-included as
+    # optional (inbound auth). Exit 1 when a required secret is missing/loose.
+    $PY - <<'PY'
+import json, os, pathlib, sys
+
+bad = 0
+for mf in sorted(pathlib.Path(".").glob("*/*/mcp.json")):
+    if any(p.startswith("_") for p in mf.parts):
+        continue
+    m = json.loads(mf.read_text(encoding="utf-8"))
+    entries = list(m.get("secrets") or [])
+    if m.get("auth_env"):
+        entries.append({"env": m["auth_env"], "optional": True,
+                        "note": "inbound auth (mcp.json auth_env)"})
+    if not entries:
+        continue
+    for s in entries:
+        env, path = s.get("env"), s.get("path")
+        opt = s.get("optional")
+        note = f" — {s['note']}" if s.get("note") else ""
+        if env and os.environ.get(env):
+            print(f"  ✓ {m['name']}: {env} set from environment{note}")
+            continue
+        if not path:
+            msg = f"  ⚠ {m['name']}: {env or '?'} not set, no key file declared{note}"
+            print(msg + (" (optional)" if opt else ""))
+            if not opt:
+                bad += 1
+            continue
+        p = pathlib.Path(path).expanduser()
+        if not p.exists():
+            if opt:
+                print(f"  ○ {m['name']}: {path} not set (optional){note}")
+            else:
+                print(f"  ✗ {m['name']}: {path} missing, {env or 'no env'} unset{note}")
+                bad += 1
+            continue
+        mode = oct(p.stat().st_mode & 0o777)
+        strict = mode == "0o600"
+        if not strict and not opt:
+            bad += 1
+        print(f"  {'✓' if strict else '⚠'} {m['name']}: {path} exists, mode={mode}{note}")
+print(f"secrets: {'FAIL' if bad else 'OK'} ({bad} problem(s))")
+sys.exit(1 if bad else 0)
+PY
+    ;;
+
+  _plan_install_clients)
+    # Read-only diff of "what install-clients would change" per client config.
+    $PY - <<'PY'
+import json, pathlib, re
+
+HOME = pathlib.Path.home()
+KNOWN = ("claude", "codex", "agy", "dsh", "zcode")
+
+def desired(client):
+    out = {}
+    for mf in pathlib.Path(".").glob("*/*/mcp.json"):
+        if any(p.startswith("_") for p in mf.parts):
+            continue
+        m = json.loads(mf.read_text(encoding="utf-8"))
+        if m.get("clients") and client not in m["clients"]:
+            continue
+        out[m["name"]] = f"http://localhost:{m['port']}/mcp"
+    return out
+
+def fleetish(url):
+    return bool(re.match(r"^http://localhost:8\d{3}/mcp$", url or ""))
+
+targets = {}
+try:
+    d = json.loads((HOME / ".claude.json").read_text())
+    targets["claude"] = {k: v.get("url", "") for k, v in (d.get("mcpServers") or {}).items() if isinstance(v, dict)}
+except Exception:
+    targets["claude"] = None
+try:
+    import tomllib
+    t = tomllib.loads((HOME / ".codex/config.toml").read_text())
+    targets["codex"] = {k: v.get("url", "") for k, v in (t.get("mcp_servers") or {}).items() if isinstance(v, dict)}
+except Exception:
+    targets["codex"] = None
+try:
+    g = json.loads((HOME / ".gemini/config/mcp_config.json").read_text())
+    targets["agy"] = {k: v.get("serverUrl", "") for k, v in (g.get("mcpServers") or {}).items() if isinstance(v, dict)}
+except Exception:
+    targets["agy"] = None
+try:
+    z = json.loads((HOME / ".zcode/cli/config.json").read_text())
+    targets["zcode"] = {k: v.get("url", "") for k, v in (z.get("mcp", {}).get("servers") or {}).items() if isinstance(v, dict)}
+except Exception:
+    targets["zcode"] = None
+try:
+    import yaml
+
+    class _L(yaml.SafeLoader):  # cordis patch allows !!js expressions — ignore unknown tags
+        pass
+    _L.add_multi_constructor("tag:yaml.org,2002:js", lambda loader, suffix, node: None)
+    _L.add_multi_constructor("!", lambda loader, suffix, node: None)
+
+    for prof in ("web", "headless"):
+        text = (HOME / f".dsh/profiles/{prof}/cordis.patch.yml").read_text()
+        names = {}
+        doc = yaml.load(text, Loader=_L) or []
+        def walk(o):
+            if isinstance(o, dict):
+                if o.get("name") == "@deepseek-ai/dsh-mcp-client":
+                    c = o.get("config") or {}
+                    names[c.get("serverName", "?")] = c.get("url", "")
+                for v in o.values():
+                    walk(v)
+            elif isinstance(o, list):
+                for v in o:
+                    walk(v)
+        walk(doc)
+        if not names:  # loader still failed -> textual fallback (we generate this block ourselves)
+            names = dict(re.findall(r"serverName: (\S+)\s*\n\s*transport: streamable-http\s*\n\s*url: (\S+)", text))
+        targets[f"dsh:{prof}"] = names or None
+except Exception:
+    targets["dsh:web"] = targets["dsh:headless"] = None
+
+LABEL = {
+    "claude": "Claude  ~/.claude.json",
+    "codex": "Codex   ~/.codex/config.toml",
+    "agy": "agy     ~/.gemini/config/mcp_config.json",
+    "dsh:web": "dsh     web patch",
+    "dsh:headless": "dsh     headless patch",
+    "zcode": "ZCode   ~/.zcode/cli/config.json",
+}
+for key in ("claude", "codex", "agy", "dsh:web", "dsh:headless", "zcode"):
+    want = desired(key.split(":")[0])
+    cur = targets.get(key)
+    if cur is None:
+        print(f"  {LABEL[key]}: {len(want)} desired — config unreadable!")
+        continue
+    add = {k: v for k, v in want.items() if k not in cur}
+    upd = {k: (cur[k], v) for k, v in want.items() if k in cur and cur[k] != v}
+    stale = {k: v for k, v in cur.items() if k not in want and fleetish(v)}
+    extra = [k for k in cur if k not in want and not fleetish(cur[k])]
+    print(f"  {LABEL[key]}: {len(want)} desired | +{len(add)} ~{len(upd)} stale-fleet:{len(stale)} non-fleet:{len(extra)}")
+    for k, v in add.items():
+        print(f"      + {k} {v}")
+    for k, (old, new) in upd.items():
+        print(f"      ~ {k} {old} -> {new}")
+    for k, v in stale.items():
+        auto = "dsh auto-cleans" if key.startswith("dsh") else "remove manually if decommissioned"
+        print(f"      - {k} {v} (stale fleet entry; {auto})")
+PY
+    ;;
+
   new)
     os="${1:-}"; name="${2:-}"
     { [ "$os" = wsl ] || [ "$os" = win ]; } && [ -n "$name" ] || { echo "usage: ./fleet.sh new <wsl|win> <name>"; exit 1; }
@@ -184,7 +441,7 @@ PY
     ;;
 
   install-claude)
-    _mcps | while read -r name port os dir heavy; do
+    _mcps_c claude | while read -r name port os dir heavy; do
       claude mcp remove "$name" -s user >/dev/null 2>&1 || true
       claude mcp add --transport http "$name" "http://localhost:$port/mcp" -s user && echo "  + $name -> :$port"
     done
@@ -205,11 +462,19 @@ PY
     #   dsh     ~/.dsh/profiles/*/cordis.patch.yml (dsh-mcp-client block fully
     #           regenerated -> stale fleet entries cleaned; other patches/comments kept)
     #   ZCode   ~/.zcode/cli/config.json mcp.servers (add/update by name only)
+    # Members with mcp.json "clients": [...] are only registered to those clients.
+    # --dry-run prints the change plan without writing anything.
+    echo "== plan (desired vs current) =="
+    "$0" _plan_install_clients
+    if [ "${1:-}" = "--dry-run" ]; then
+      echo "(dry-run: nothing written)"
+      exit 0
+    fi
     echo "== Claude Code =="
     "$0" install-claude
     echo "== Codex =="
     if command -v codex >/dev/null 2>&1; then
-      _mcps | while read -r name port os dir heavy; do
+      _mcps_c codex | while read -r name port os dir heavy; do
         codex mcp remove "$name" >/dev/null 2>&1 || true
         codex mcp add --url "http://localhost:$port/mcp" "$name" >/dev/null 2>&1 \
           && echo "  + $name -> :$port" || echo "  ✗ $name (codex add failed)"
@@ -219,7 +484,7 @@ PY
     fi
     echo "== agy =="
     if command -v agy >/dev/null 2>&1; then
-      _mcps | while read -r name port os dir heavy; do
+      _mcps_c agy | while read -r name port os dir heavy; do
         agy mcp add "$name" "http://localhost:$port/mcp" >/dev/null 2>&1 \
           && echo "  + $name -> :$port" || echo "  ✗ $name (agy add failed)"
       done
@@ -230,12 +495,15 @@ PY
     if command -v dsh >/dev/null 2>&1 && [ -d "$HOME/.dsh/profiles" ]; then
       $PY - <<'PY'
 import glob, json, pathlib
-members = sorted(
-    (int(m["port"]), m["name"])
-    for mf in pathlib.Path(".").glob("*/*/mcp.json")
-    if not any(p.startswith("_") for p in mf.parts)
-    for m in [json.loads(mf.read_text(encoding="utf-8"))]
-)
+members = []
+for mf in pathlib.Path(".").glob("*/*/mcp.json"):
+    if any(p.startswith("_") for p in mf.parts):
+        continue
+    m = json.loads(mf.read_text(encoding="utf-8"))
+    if m.get("clients") and "dsh" not in m["clients"]:
+        continue
+    members.append((int(m["port"]), m["name"]))
+members.sort()
 lines = ["- insert:"]
 for port, name in members:
     lines += [
@@ -281,12 +549,15 @@ PY
     if [ -d "$HOME/.zcode/cli" ]; then
       $PY - <<'PY'
 import json, pathlib
-members = sorted(
-    (int(m["port"]), m["name"])
-    for mf in pathlib.Path(".").glob("*/*/mcp.json")
-    if not any(p.startswith("_") for p in mf.parts)
-    for m in [json.loads(mf.read_text(encoding="utf-8"))]
-)
+members = []
+for mf in pathlib.Path(".").glob("*/*/mcp.json"):
+    if any(p.startswith("_") for p in mf.parts):
+        continue
+    m = json.loads(mf.read_text(encoding="utf-8"))
+    if m.get("clients") and "zcode" not in m["clients"]:
+        continue
+    members.append((int(m["port"]), m["name"]))
+members.sort()
 p = pathlib.Path.home() / ".zcode/cli/config.json"
 cfg = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
 servers = cfg.setdefault("mcp", {}).setdefault("servers", {})

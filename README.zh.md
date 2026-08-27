@@ -85,6 +85,9 @@ uv pip compile requirements.txt -o requirements.lock   # 锁依赖(可复现)
 ./fleet.sh doctor     # 查 uv/node/pm2/nix
 ./fleet.sh up         # PM2 拉起全部 wsl MCP(各一进程)
 ./fleet.sh health     # 逐个 curl /health
+./fleet.sh verify     # 协议级实测: 每成员真跑 initialize+tools/list(只读不重启)
+./fleet.sh secrets    # 密钥审计: 依赖的 key 文件存在性+0600 权限
+./fleet.sh install-clients --dry-run  # 先看五端将改什么, 再决定是否落盘
 ./fleet.sh install-clients  # 一键把全部 MCP 重注册到五端(Claude/Codex/agy/dsh/ZCode), 幂等
 ./fleet.sh autostart  # pm2 save + 提示开机自启命令
 ./fleet.sh config     # 生成客户端 .mcp.json

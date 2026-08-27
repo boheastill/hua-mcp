@@ -1,7 +1,8 @@
 # Phone-Eye 工程实录(对内)
 
-> 对外契约页: **github.com/boheastill/phone-eye**(本地 `infra/phone-eye/`, 即 git 仓,
-> 客户视角, 稳定; 本文可随意改)。
+> 对外契约页: **github.com/boheastill/phone-eye**(本地 `app/phone-eye/`, 即 git 仓,
+> 客户视角, 稳定; 本文可随意改)。对内文档包(档案/推广/产品/评审)在
+> `app/phone-eye/.internal/`(gitignore, 不进公开仓)。
 > 2026-08-25 v0.1 落地实录(M1 完成)。改内部实现前读这里, 改完更新这里。
 
 ## 一、它是什么(一句话)
@@ -10,10 +11,10 @@ hua-mcp 舰队第 10 个成员(端口 8122): 把"真手机屏幕"变成任何 MC
 —— 看(phone_look) + 点/滑/输(phone_tap/swipe/type) + 截屏(phone_screenshot)。
 一个实现喂 dsh/claude/codex/agy 四家。
 
-**M1 架构变更(2026-08-25 晚)**: 独立可分发版 server.py 落在 `infra/phone-eye/`
+**M1 架构变更(2026-08-25 晚)**: 独立可分发版 server.py 落在 `app/phone-eye/`
 (单一事实源, 纯 FastMCP stdio, 零舰队依赖); **本目录 server.py 退化为薄壳**
 (import 独立版, 挂 huamcp HTTP 传输 + 默认 env 指向舰队视觉成员)。
-改代码 → 改 `infra/phone-eye/server.py`, 两处(独立/舰队)同时生效。
+改代码 → 改 `app/phone-eye/server.py`, 两处(独立/舰队)同时生效。
 
 ⚠️ 壳的实现坑(2026-08-25 CR 修): 壳自己也叫 server, 用 `import server as core`
 会在壳被当作 `server` 模块导入时(fleet.sh test 的 import 冒烟)递归命中自己 →
