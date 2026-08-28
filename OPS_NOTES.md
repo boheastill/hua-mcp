@@ -112,6 +112,18 @@ nohup bash -c 'sleep 35; systemctl --user restart dsh-web' >/tmp/dsh-restart.log
 - **agent 沙箱 HOME 陷阱仍在**: 非常规 shell(HOME 被改写, 如当年 zcode 桥的 bridge-home)里
   裸跑 `pm2 ls` 会连到/新建**错误的 daemon**(空表误判"舰队掉了", `fleet.sh up` 还会
   在占用端口重复起进程)。铁律: 前缀 `PM2_HOME=/home/bohea/.pm2 pm2 ...`。
+- **冷启动 PATH 陷阱 (2026-08-28 真实开机实锤)**: 单元 ExecStart 原为 nvm 的 pm2 绝对路径,
+  但 pm2 shebang 是 `#!/usr/bin/env node` — **开机时 systemd 用户管理器 PATH 无 nvm**,
+  `env` 找不到 node → resurrect exit 127 → 舰队全体没起(此前从未真机重启过, 一直没暴露;
+  8/26 那次恢复是会话内 restart, 用户管理器带着完整 PATH, 属侥幸通过)。
+  修复(单元已改): `Environment=PATH=<nvm bin>:~/.local/bin:/usr/local/bin:/usr/bin:/bin`
+  + `ExecStart=<nvm>/node <nvm>/pm2 resurrect`(显式 node, 不赌 shebang)。
+  复现/验证法: `env -i PATH=/usr/bin:/bin ... <nvm>/pm2 --version` → 旧式报
+  `env: 'node': No such file or directory`, 新式正常。**教训: 单元里引用 nvm 二进制,
+  一律显式 node 前缀 + 钉 PATH**; nvm 升级 node 版本后记得同步单元里的绝对路径。
+  连锁残留: 开机时 dsh 若先于舰队就绪而启动, 其 mcp 工具会静默不注册(§五连锁坑) —
+  重启后若 dsh 无 mcp__* 工具, `systemctl --user restart dsh` 即可(未给 dsh 单元加
+  After=pm2-fleet, 那是 dsh 自己的单元, 不越界改)。
   变体(2026-08-26 实锤, 比空表更凶): **cgroup 陷阱**——从 dsh 会话里跑 `fleet.sh up`/`pm2`,
   daemon 作为子孙进程挂进 `dsh.service` cgroup, dsh 重启时 systemd 杀整树=舰队全体陪葬
   (当日 02:05、14:57 两次"神秘掉 fleet"同根因), 且事后任何 `pm2 ls` 又自动拉起空 daemon
