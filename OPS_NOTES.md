@@ -282,6 +282,16 @@ dsh 会话调 agy MCP 立即 `MCP error -32001 timeout`, 同期 agy CLI 本体�
   自愈); **agy 特记(2026-08-27 实锤)**: 长时间闲置后首次 verify 可能连 90s 都超时
   (与 2026-08-25 故障档同源的 server 端残留阻塞, initialize 并不碰 PTY), 跑第二遍即绿 —
   遇 agy 单项 ✗ 先重跑一遍 verify 再排查。
+- **agy 长调用冻结全成员(2026-08-28 实锤, 比上面更凶)**: 任一 `agy_ask` 执行期间
+  (实测一次音频转写跑了 ~9 分钟: 首试 4m 超时+重试), agy 成员**整体失联** —
+  /health、新 MCP initialize 全超时, 但 pm2 显示 online、日志停在 CallToolRequest。
+  调用一结束立即自愈。取证硬矛盾: 子进程在飞时 /proc 只剩 1 个线程(正常应有
+  loop+worker ≥2), 指向**同步工具实际跑在事件循环上**(而非线程池) — 根因待下次
+  复现时 `py-spy dump` 定锤。
+  **处置铁律: 遇 agy ✗ 先 `pm2 logs mcp-agy-8103` 看有没有在飞的 CallToolRequest +
+  `ps --ppid $(pm2 pid mcp-agy-8103)` 看子进程 — 有就等, 千万别 restart**
+  (会杀掉别的会话正在跑的任务 + 作废全部会话; 实测多 zcode-cli 会话并发共用该成员)。
+  health/verify 对 agy 的 ✗ 要结合此条解读, 不是真宕机。
 - **`fleet.sh secrets`** — 密钥审计: 元数据在 mcp.json 可选 `secrets: [{env, path,
   optional?, note?}]`(auth_env 自动并入为 optional)。查存在性+0600; required 缺失才 FAIL。
   当前台账: glm 全家+glmvision 用 ~/.glm/key.txt, kimi 用 ~/.kimi/key.txt, ics-core 用
