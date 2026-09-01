@@ -34,6 +34,9 @@ import json
 import os
 import pathlib
 import sys
+import threading
+import time
+import uuid
 
 from mcp.server.fastmcp import FastMCP
 
@@ -227,3 +230,62 @@ def run_relay(app, server_file: str) -> None:
     host = "0.0.0.0" if public else "127.0.0.1"
     port = int(os.environ.get("HUAMCP_PORT", meta["port"]))
     uvicorn.run(app, host=host, port=port)
+
+
+# ------------------------------------------------------------ background tasks
+# Some clients hard-timeout MCP tool calls (ZCode: 30s) while legitimate tools
+# run minutes (agy_ask / kimi_ask). Members submit the slow body via
+# submit_task() and answer fast — finished result, or a task_id the agent polls
+# with its *_task_result tool — so every client, timeout or not, gets served.
+# Bonus: the heavy work churns on a daemon thread, so the member's HTTP loop
+# stays responsive while a long call is in flight.
+
+_tasks: dict = {}
+_tasks_lock = threading.Lock()
+
+
+def submit_task(fn, *args, max_concurrent: int = 3, grace_s: float = 1800.0, **kwargs) -> dict:
+    """Run ``fn(*args, **kwargs)`` on a daemon thread; return its task dict at
+    once: ``{"id", "status": "running"}`` (or ``status: "busy"`` with an error
+    message when max_concurrent is reached). The outcome later appears as
+    status ``"done"``/``"error"`` with ``"result"``; finished tasks are kept
+    for grace_s (default 30 min) then pruned. fn must not raise for expected
+    failures — return an error string instead; raises are caught and recorded
+    as status "error"."""
+    with _tasks_lock:
+        running = sum(1 for t in _tasks.values() if t["status"] == "running")
+        if running >= max_concurrent:
+            return {"status": "busy", "error": f"{running} 个后台任务在跑(上限 {max_concurrent}), 稍等再试"}
+        now = time.time()
+        for k in [k for k, t in _tasks.items()
+                  if t["status"] != "running" and now - t["finished"] > t["grace_s"]]:
+            del _tasks[k]
+        tid = uuid.uuid4().hex[:12]
+        task = {"id": tid, "status": "running", "result": "", "started": now,
+                "grace_s": grace_s, "done": threading.Event()}
+        _tasks[tid] = task
+
+    def _run():
+        try:
+            task["result"] = fn(*args, **kwargs)
+            task["status"] = "done"
+        except Exception as e:  # noqa: BLE001 — a crashed worker must still surface
+            task["result"] = f"{type(e).__name__}: {e}"
+            task["status"] = "error"
+        finally:
+            task["finished"] = time.time()
+            task["done"].set()
+
+    threading.Thread(target=_run, daemon=True, name=f"huamcp-task-{tid}").start()
+    return task
+
+
+def poll_task(task_id: str) -> dict:
+    """Fetch a task dict from submit_task(). Unknown/expired ids come back as
+    status "gone" with a human-readable result field."""
+    with _tasks_lock:
+        t = _tasks.get((task_id or "").strip())
+    if t is None:
+        return {"id": task_id, "status": "gone",
+                "result": "task 不存在(结果已过保留期清理, 或 task_id 不对)"}
+    return t

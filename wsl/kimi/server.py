@@ -115,6 +115,23 @@ def _chat(model_id: str, messages: list, max_tokens: int, effort: str = "") -> s
 
 mcp = huamcp.server(__file__)
 
+FAST_WAIT_S = 12  # 快任务就地等完直接给结果; 慢任务立即回 task_id 轮询(兼容 ZCode 等客户端 30s 硬超时)
+
+
+def _kimi_ask_impl(prompt: str, model: str, system: str, effort: str, json_mode: bool) -> str:
+    """kimi_ask 的同步执行体(在后台线程里跑)。"""
+    model_id = _resolve_model(model)
+    if effort and effort not in VALID_EFFORTS:
+        raise RuntimeError(f"effort 只能是 {sorted(VALID_EFFORTS)} 之一, 收到 {effort!r}")
+    sys_content = system.strip() or "你是用户的云端委托模型, 直接给出有用、完整的回答。"
+    if json_mode:
+        sys_content += " 只输出一个合法的 JSON 对象, 不要输出任何其他文字、解释或代码块标记。"
+    messages = [{"role": "system", "content": sys_content},
+                {"role": "user", "content": prompt}]
+    return _chat(model_id, messages,
+                 max_tokens=env_int("KIMI_MAX_TOKENS", 4096),
+                 effort=effort)
+
 
 @mcp.tool()
 def kimi_ask(prompt: str, model: str = "", system: str = "",
@@ -138,19 +155,39 @@ def kimi_ask(prompt: str, model: str = "", system: str = "",
     - effort: K3 家族思考档 low/high/max (默认 low=委托经济档; 难题给 high/max);
               K2.7 Coding 系列无此参数, 传了会被忽略
     - json_mode: 强制只输出一个合法 JSON 对象
+
+    【返回】快任务(≤12s)直接给结果; 慢任务立即返回 [任务受理] task_id=xxx,
+    之后用 kimi_task_result(task_id) 每 5-10s 轮询, 结果保留 30 分钟。
     """
     try:
-        model_id = _resolve_model(model)
-        if effort and effort not in VALID_EFFORTS:
-            raise RuntimeError(f"effort 只能是 {sorted(VALID_EFFORTS)} 之一, 收到 {effort!r}")
-        sys_content = system.strip() or "你是用户的云端委托模型, 直接给出有用、完整的回答。"
-        if json_mode:
-            sys_content += " 只输出一个合法的 JSON 对象, 不要输出任何其他文字、解释或代码块标记。"
-        messages = [{"role": "system", "content": sys_content},
-                    {"role": "user", "content": prompt}]
-        return _chat(model_id, messages,
-                     max_tokens=env_int("KIMI_MAX_TOKENS", 4096),
-                     effort=effort)
+        task = huamcp.submit_task(_kimi_ask_impl, prompt, model, system, effort, json_mode,
+                                  max_concurrent=3)
+        if task["status"] == "busy":
+            return task["error"]
+        if task["done"].wait(FAST_WAIT_S):
+            return task["result"] if task["status"] == "done" else f"工具内部错误: {task['result']}"
+        return (f"[任务受理] task_id={task['id']} 仍在运行。"
+                f"用 kimi_task_result(task_id='{task['id']}') 每 5-10s 轮询取结果, 结果保留 30 分钟。")
+    except Exception as e:  # noqa: BLE001
+        return f"工具内部错误: {type(e).__name__}: {e}"
+
+
+@mcp.tool()
+def kimi_task_result(task_id: str) -> str:
+    """轮询 kimi_ask 后台任务的结果。
+
+    【何时用】kimi_ask 返回了 [任务受理] task_id=... 之后, 每 5-10s 调一次本工具,
+    直到拿到结果(running → 继续等; done → 正文; error → 出错信息)。
+    【返回】[运行中]+已跑秒数 / 结果正文 / 错误; 结果保留 30 分钟后清理。
+    """
+    try:
+        t = huamcp.poll_task(task_id)
+        if t["status"] == "running":
+            return f"[运行中] 已跑 {int(time.time() - t['started'])}s, 稍后再 poll"
+        if t["status"] == "gone" or "finished" not in t:
+            return t.get("result", "task 不存在")
+        prefix = "" if t["status"] == "done" else "[任务出错] "
+        return f"{prefix}{t['result']}\n(耗时 {int(t['finished'] - t['started'])}s, task_id={t['id']})"
     except Exception as e:  # noqa: BLE001
         return f"工具内部错误: {type(e).__name__}: {e}"
 

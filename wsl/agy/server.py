@@ -33,8 +33,48 @@ from typing import List, Optional
 
 AGY = "/home/bohea/.local/bin/agy"
 CALL_TIMEOUT_S = 270
+FAST_WAIT_S = 12  # 快任务就地等完直接给结果; 慢任务立即回 task_id 轮询(兼容 ZCode 等客户端 30s 硬超时)
 
 mcp = huamcp.server(__file__)
+
+
+def _agy_call(args: list) -> str:
+    """同步执行 agy CLI 并格式化输出(在后台线程里跑)。"""
+    r = None
+    for attempt in (1, 2):
+        try:
+            r = subprocess.run(
+                args, capture_output=True, text=True, timeout=CALL_TIMEOUT_S,
+                cwd=str(pathlib.Path.home()),
+            )
+        except subprocess.TimeoutExpired:
+            return f"agy 超时 ({CALL_TIMEOUT_S}s)"
+        if r.returncode == 0:
+            break
+        if attempt == 1:
+            time.sleep(2)  # 瞬时失败(如并发的 agy 实例锁)重试一次
+    if r.returncode != 0:
+        tail = (r.stderr.strip()[-400:] or r.stdout.strip()[-400:])
+        return f"agy 失败 (exit {r.returncode}): {tail or '(无输出——疑登录态失效, 终端跑 `agy` 看真实报错)'}"
+    out = r.stdout.strip()
+    try:
+        j = json.loads(out.splitlines()[-1])
+    except (ValueError, IndexError):
+        return out[-8000:] or "(空输出)"
+    if j.get("status") and j["status"] != "SUCCESS":
+        return f"agy 状态 {j['status']}: {str(j.get('error', ''))[:400]}"
+    resp = j.get("response") or "(空回复)"
+    cid = j.get("conversation_id") or ""
+    if cid:
+        resp += f"\n\n[会话ID] {cid} (续聊时把它传给 conversation 参数)"
+    usage = j.get("usage") or {}
+    if usage:
+        resp += (
+            f"\n[本次用量] 输入 {usage.get('input_tokens', '?')} / "
+            f"输出 {usage.get('output_tokens', '?')} / "
+            f"思考 {usage.get('thinking_tokens', '?')} tokens"
+        )
+    return resp
 
 
 @mcp.tool()
@@ -47,26 +87,29 @@ def agy_ask(
 ) -> str:
     """调用终端里的 Antigravity agent (agy, 全模态) — 复杂任务的外包通道。
 
-【何时用】(派重活前先查 mcp__agy__agy_quota 剩余额度)
-- 深度推理/复杂分析: 主模型(如 DeepSeek/GLM 文本)想不通、需要更强推理时
-- 看图+推理复合任务: 截图/设计稿/流程图 需要"看懂并继续分析"
-- 联网调研: 需要实时查证、聚合多来源信息
-- 多步工具操作: 读文件+看文件+跑命令一条龙
+    【何时用】(派重活前先查 mcp__agy__agy_quota 剩余额度)
+    - 深度推理/复杂分析: 主模型(如 DeepSeek/GLM 文本)想不通、需要更强推理时
+    - 看图+推理复合任务: 截图/设计稿/流程图 需要"看懂并继续分析"
+    - 联网调研: 需要实时查证、聚合多来源信息
+    - 多步工具操作: 读文件+看文件+跑命令一条龙
 
-【何时别用】(别乱烧额度)
-- 纯看图: 用 mcp__glmvision__describe_image(秒级、便宜、不留会话)
-- 简单问答/主模型自己能答的: 别调, agy 慢(数秒~数分钟)且消耗额度
-- 大批量任务前: 先 mcp__agy__agy_quota, 额度不足时拆小任务或用 glmvision
+    【何时别用】(别乱烧额度)
+    - 纯看图: 用 mcp__glmvision__describe_image(秒级、便宜、不留会话)
+    - 简单问答/主模型自己能答的: 别调, agy 慢(数秒~数分钟)且消耗额度
+    - 大批量任务前: 先 mcp__agy__agy_quota, 额度不足时拆小任务或用 glmvision
 
-【参数】prompt 任务描述(引用文件写绝对路径并列入 paths); paths 开放给
-agy 读的文件/目录(省略默认整个家目录); model 默认 gemini-3.7-flash-high
-(可换 claude-opus-4-6-thinking 等, `agy models` 查列表); effort low|medium|
-high 默认 high(简单确认类可降 low 提速省钱); conversation 传上次返回的
-[会话ID] 在同一会话续聊(追问/多轮), 不要为追问另开新会话。
+    【参数】prompt 任务描述(引用文件写绝对路径并列入 paths); paths 开放给
+    agy 读的文件/目录(省略默认整个家目录); model 默认 gemini-3.7-flash-high
+    (可换 claude-opus-4-6-thinking 等, `agy models` 查列表); effort low|medium|
+    high 默认 high —— gemini/gpt-oss 系模型名自带档位后缀, effort 会自动换到
+    对应变体(如 -high 收到 low → 切 -low 档), claude 系才真正传 --effort;
+    conversation 传上次返回的 [会话ID] 在同一会话续聊(追问/多轮), 不要为追问另开新会话。
 
-【返回】结论 + [会话ID](续聊用) + 本次 token 用量。
-【代价】数秒~数分钟; 本地留一条会话记录; 按 agy 账户额度计费。
-"""
+    【返回】快任务(≤12s)直接给结果; 慢任务立即返回
+    [任务受理] task_id=xxx —— 之后用 agy_task_result(task_id) 每 5-10s 轮询,
+    结果保留 30 分钟。结论含 [会话ID](续聊用) + 本次 token 用量。
+    【代价】数秒~数分钟; 本地留一条会话记录; 按 agy 账户额度计费。
+    """
     try:
         args = [
             AGY, "-p", prompt,
@@ -74,10 +117,20 @@ high 默认 high(简单确认类可降 low 提速省钱); conversation 传上次
             "--output-format", "json",
             "--print-timeout", "4m",
         ]
-        if model.strip():
-            args += ["--model", model.strip()]
-        if effort.strip():
-            args += ["--effort", effort.strip()]
+        model_id = model.strip()
+        eff = effort.strip().lower()
+        # CLI 1.1.22 起 gemini/gpt-oss 系把档位编码进模型名(-high/-medium/-low),
+        # 再传冲突的 --effort 会直接报错 — 换到对应档位变体并省掉 --effort
+        for _s in ("-high", "-medium", "-low"):
+            if model_id.endswith(_s):
+                if eff in ("low", "medium", "high") and not model_id.endswith(f"-{eff}"):
+                    model_id = model_id[: -len(_s)] + f"-{eff}"
+                eff = ""
+                break
+        if model_id:
+            args += ["--model", model_id]
+        if eff:
+            args += ["--effort", eff]
         if conversation.strip():
             args += ["--conversation", conversation.strip()]
         for raw in paths or []:
@@ -85,41 +138,34 @@ high 默认 high(简单确认类可降 low 提速省钱); conversation 传上次
                 continue
             d = pathlib.Path(raw).expanduser()
             args += ["--add-dir", str(d.parent if d.is_file() else d)]
-        for attempt in (1, 2):
-            try:
-                r = subprocess.run(
-                    args, capture_output=True, text=True, timeout=CALL_TIMEOUT_S,
-                    cwd=str(pathlib.Path.home()),
-                )
-            except subprocess.TimeoutExpired:
-                return f"agy 超时 ({CALL_TIMEOUT_S}s)"
-            if r.returncode == 0:
-                break
-            if attempt == 1:
-                time.sleep(2)  # 瞬时失败(如并发的 agy 实例锁)重试一次
-        if r.returncode != 0:
-            tail = (r.stderr.strip()[-400:] or r.stdout.strip()[-400:])
-            return f"agy 失败 (exit {r.returncode}): {tail or '(无输出——疑登录态失效, 终端跑 `agy` 看真实报错)'}"
-        out = r.stdout.strip()
-        try:
-            j = json.loads(out.splitlines()[-1])
-        except (ValueError, IndexError):
-            return out[-8000:] or "(空输出)"
-        if j.get("status") and j["status"] != "SUCCESS":
-            return f"agy 状态 {j['status']}: {str(j.get('error', ''))[:400]}"
-        resp = j.get("response") or "(空回复)"
-        cid = j.get("conversation_id") or ""
-        if cid:
-            resp += f"\n\n[会话ID] {cid} (续聊时把它传给 conversation 参数)"
-        usage = j.get("usage") or {}
-        if usage:
-            resp += (
-                f"\n[本次用量] 输入 {usage.get('input_tokens', '?')} / "
-                f"输出 {usage.get('output_tokens', '?')} / "
-                f"思考 {usage.get('thinking_tokens', '?')} tokens"
-            )
-        return resp
+        task = huamcp.submit_task(_agy_call, args, max_concurrent=2)
+        if task["status"] == "busy":
+            return task["error"]
+        if task["done"].wait(FAST_WAIT_S):
+            return task["result"] if task["status"] == "done" else f"工具内部错误: {task['result']}"
+        return (f"[任务受理] task_id={task['id']} 仍在运行(agy 深度任务分钟级)。"
+                f"用 agy_task_result(task_id='{task['id']}') 每 5-10s 轮询取结果, 结果保留 30 分钟。")
     except Exception as e:  # noqa: BLE001 — 绝不让异常杀死 MCP 会话
+        return f"工具内部错误: {type(e).__name__}: {e}"
+
+
+@mcp.tool()
+def agy_task_result(task_id: str) -> str:
+    """轮询 agy_ask 后台任务的结果。
+
+    【何时用】agy_ask 返回了 [任务受理] task_id=... 之后, 每 5-10s 调一次本工具,
+    直到拿到结果(running → 继续等; done → 正文; error → 出错信息)。
+    【返回】[运行中]+已跑秒数 / 结果正文(含[会话ID]) / 错误; 结果保留 30 分钟后清理。
+    """
+    try:
+        t = huamcp.poll_task(task_id)
+        if t["status"] == "running":
+            return f"[运行中] 已跑 {int(time.time() - t['started'])}s, 稍后再 poll (转写/深度任务可到 4-9 分钟)"
+        if t["status"] == "gone" or "finished" not in t:
+            return t.get("result", "task 不存在")
+        prefix = "" if t["status"] == "done" else "[任务出错] "
+        return f"{prefix}{t['result']}\n(耗时 {int(t['finished'] - t['started'])}s, task_id={t['id']})"
+    except Exception as e:  # noqa: BLE001
         return f"工具内部错误: {type(e).__name__}: {e}"
 
 

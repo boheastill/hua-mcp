@@ -292,6 +292,23 @@ dsh 会话调 agy MCP 立即 `MCP error -32001 timeout`, 同期 agy CLI 本体�
   `ps --ppid $(pm2 pid mcp-agy-8103)` 看子进程 — 有就等, 千万别 restart**
   (会杀掉别的会话正在跑的任务 + 作废全部会话; 实测多 zcode-cli 会话并发共用该成员)。
   health/verify 对 agy 的 ✗ 要结合此条解读, 不是真宕机。
+  **2026-09-01 缓解**: agy_ask/kimi_ask 已改后台任务双路模式(见 §十五), 重活在守护线程,
+  实测慢任务执行期间 /health 持续 200。
+
+## 十五、长任务双路模式 + agy CLI 1.1.22 档位模型名 (2026-09-01)
+
+- **背景**: ZCode 客户端对 MCP 工具有 **30s 硬超时**(docs/incident-zcode-mcp-30s-timeout-20260829.md),
+  分钟级 ask 类工具(agy_ask/kimi_ask)在 ZCode 内必死; 轻工具(quota)正常。
+- **修复**: `huamcp.py` 新增 `submit_task()/poll_task()` 共享后台任务器;
+  agy_ask/kimi_ask 快慢双路 — ≤12s 就地等完直答(其他客户端体验不变),
+  慢任务立即回 `[任务受理] task_id`, 配套 `agy_task_result/kimi_task_result` 轮询
+  (结果保留 30 分钟; agy 并发上限 2 — CLI 本身有实例锁, kimi 3)。
+  红利: 重活进守护线程后, §十四的"agy 长调用冻结全成员"实测已缓解。
+- **agy CLI 1.1.22 新语义**: 模型名自带档位后缀(gemini-3.7-flash-high/-medium/-low、
+  gpt-oss-120b-medium 等), 传冲突的 `--effort` 直接 exit 1
+  (`--model gemini-3.7-flash-high conflicts with --effort=low`)。
+  agy_ask 现对带后缀模型自动切到 effort 对应变体并省掉 --effort;
+  claude 系(无后缀)仍传 --effort。老脚本直连 CLI 注意同样坑。
 - **`fleet.sh secrets`** — 密钥审计: 元数据在 mcp.json 可选 `secrets: [{env, path,
   optional?, note?}]`(auth_env 自动并入为 optional)。查存在性+0600; required 缺失才 FAIL。
   当前台账: glm 全家+glmvision 用 ~/.glm/key.txt, kimi 用 ~/.kimi/key.txt, ics-core 用
