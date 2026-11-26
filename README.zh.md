@@ -116,3 +116,7 @@ uv pip compile requirements.txt -o requirements.lock   # 锁依赖(可复现)
 ## 运维经验
 
 新成员检查单、streamable-http 会话铁律(重启 MCP 后必须重启客户端)、各客户端接线位置、DSH 平滑重启、agy 特记 —— 见 [OPS_NOTES.md](OPS_NOTES.md)。
+
+---
+
+*作者：[Bohea](https://boheastill.com/zh/?r=gh-hua-mcp)（[hi@boheastill.com](mailto:hi@boheastill.com)）— 独立工程师，专注软硬件集成与高可靠自动化。*
