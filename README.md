@@ -153,3 +153,7 @@ supervisor and a service discovery story; the ideas here should still port.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+*Built by [Bohea](https://boheastill.com/?r=gh-hua-mcp) ([hi@boheastill.com](mailto:hi@boheastill.com)) — independent engineer building hardware↔software integrations and reliable automation.*
